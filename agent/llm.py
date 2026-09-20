@@ -179,16 +179,34 @@ class CassetteLLM:
 
 
 def _loads(text: str) -> dict[str, Any] | None:
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if 0 <= start < end:
-            try:
-                return json.loads(text[start : end + 1])
-            except json.JSONDecodeError:
-                return None
+    if not text or not text.strip():
         return None
+    stripped = text.strip()
+    candidates = [stripped]
+    if stripped.startswith("```"):
+        body = stripped.split("\n", 1)[1] if "\n" in stripped else stripped
+        candidates.append(body.rsplit("```", 1)[0].strip())
+    for candidate in list(candidates):
+        start = candidate.find("{")
+        if start < 0:
+            continue
+        depth = 0
+        for index, char in enumerate(candidate[start:], start):
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    candidates.append(candidate[start : index + 1])
+                    break
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def build_llm(provider: str, **kwargs: Any) -> LLM | None:

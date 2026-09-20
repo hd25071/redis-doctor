@@ -129,6 +129,8 @@ def report_prompt(state_json: dict[str, Any], trace: list[dict]) -> str:
    slow_query_detected→slow_query；replication_full_resync_storm→replication_backlog。
 3. 只有引用到 pod_recreated_recently、且上面那些信号都没出现时，才允许选 pod_restart。
 4. 信号名以每次调用的 signals 字段为准，不要凭输出正文猜测。
+5. 只输出一个 JSON 对象本身，不要 markdown 围栏或解释文字；evidence 最多 3 条，
+   summary 不超过 200 字，suggested_actions 最多 2 条。
 
 # 当前状态
 {json.dumps(state_json, ensure_ascii=False, indent=2)}

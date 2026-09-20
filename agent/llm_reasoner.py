@@ -12,8 +12,10 @@ validated before it reaches the state:
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
+import rdconfig
 from agent import prompts
 from agent.llm import LLM
 from agent.state import (
@@ -52,7 +54,35 @@ class LLMReasoner:
         usage["total_tokens"] += response.prompt_tokens + response.completion_tokens
         state.token_usage = usage
         state.cost_usd = round(state.cost_usd + response.cost_usd, 6)
+        if expect_json and response.parsed is None:
+            self._record_unparsed(user, response)
         return response.parsed
+
+    @staticmethod
+    def _record_unparsed(user: str, response: Any) -> None:
+        """Keep the raw text when a JSON step does not parse.
+
+        Without this the only symptom is a silent fallback to the default
+        category, which is impossible to diagnose after the fact.
+        """
+        try:
+            path = rdconfig.REPO_ROOT / "eval/results/llm-raw.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "at": time.time(),
+                            "prompt_chars": len(user),
+                            "response_chars": len(response.text),
+                            "text": response.text[:4000],
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        except Exception:  # diagnostics must never break a run
+            pass
 
     def _state_json(self, state: DiagnosisState) -> dict[str, Any]:
         return {
