@@ -5,8 +5,8 @@
 16 类真实故障可以一键注入、一键恢复，每次诊断产出可追溯到具体工具调用的证据链；
 写操作一律挂在人工审批闸门后面；评测给出 A/B/C/D 四组对照数据与失败样本归类。
 
-被诊断对象是我自己的 [`redis-operator`](https://github.com/)（`ops.example.com/v1alpha1`
-的 `Redis` CR，3 副本一主两从），不是玩具 Redis。
+被诊断对象是我自己的 `redis-operator`（`ops.example.com/v1alpha1` 的 `Redis` CR，
+3 副本一主两从），不是玩具 Redis；`deploy/redis/demo-redis-cr.yaml` 就是它生成的集群。
 
 > 演示视频（3 分钟）：`docs/demo-script.md` 是逐镜头脚本与录制命令。
 > 终端实录见 [`docs/demo-trajectory.md`](docs/demo-trajectory.md)（由 `python rdctl.py demo` 真实输出）。
