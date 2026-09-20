@@ -62,20 +62,26 @@ jobs:
     needs: lint-test
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
       - name: build image
         run: docker build -f deploy/compose/Dockerfile -t redis-doctor:${{ github.sha }} .
-      - name: trivy scan
-        uses: aquasecurity/trivy-action@0.24.0
-        with:
-          image-ref: redis-doctor:${{ github.sha }}
-          format: table
-          # Advisory: the base image is not controlled by this repository, so a
-          # base-layer CVE would otherwise turn the build red for reasons
-          # unrelated to the project's code.
-          exit-code: "0"
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
+      - name: smoke the image
+        run: |
+          docker run -d --name rd-smoke -p 127.0.0.1:8099:8099 \
+            -v rd-smoke-data:/var/lib/redis-doctor redis-doctor:${{ github.sha }}
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8099/healthz && break || sleep 2
+          done
+          curl -fsS http://127.0.0.1:8099/healthz
+          curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8099/ui
+          docker logs rd-smoke | tail -3
+          docker rm -f rd-smoke
+      - name: trivy scan (advisory)
+        # Reported, not gating: the base image is outside this repository's
+        # control, so a base-layer CVE should not fail the build.
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 0 redis-doctor:${{ github.sha }}
 
   e2e-smoke:
     # Optional: exercises the real-cluster code path on a kind cluster.
