@@ -201,8 +201,32 @@ class LLMReasoner:
         self, state: DiagnosisState, trace: list[dict], catalog: list[dict] | None = None
     ) -> DiagnosisReport:
         parsed = self._ask(state, prompts.report_prompt(self._state_json(state), trace)) or {}
+        report, invalid = self._build_report(parsed, state, trace)
+        if invalid:
+            # The model cited calls or signals that do not exist. Ask once more
+            # with the offending citations spelled out; keep whichever version
+            # has fewer unsupported references.
+            parsed_retry = (
+                self._ask(state, prompts.citation_repair_prompt(parsed, invalid, trace)) or {}
+            )
+            repaired, invalid_after = self._build_report(parsed_retry, state, trace)
+            if len(invalid_after) <= len(invalid):
+                report = repaired
+                invalid = invalid_after
+            state.notes = (
+                f"引用校验重试：修正后仍未对齐 {len(invalid)} 条证据"
+                if invalid
+                else "引用校验重试：全部证据已对齐到工具调用"
+            )
+        return report
+
+    def _build_report(
+        self, parsed: dict[str, Any], state: DiagnosisState, trace: list[dict]
+    ) -> tuple[DiagnosisReport, list[str]]:
+        """Turn the model's JSON into a report, listing unsupported citations."""
         trace_by_id = {entry["call_id"]: entry for entry in trace}
         evidence: list[EvidenceRef] = []
+        invalid: list[str] = []
         for item in parsed.get("evidence") or []:
             call_id = str(item.get("call_id", ""))
             signal = str(item.get("signal", ""))
@@ -210,6 +234,7 @@ class LLMReasoner:
             if entry is None or signal not in set(entry.get("signals", [])):
                 # Keep the citation so the hallucination metric can see it, but
                 # mark it clearly as unsupported.
+                invalid.append(f"{call_id}:{signal or 'missing-signal'}")
                 evidence.append(
                     EvidenceRef(
                         call_id=call_id,
@@ -252,15 +277,18 @@ class LLMReasoner:
                     rationale=str(item.get("rationale", "")),
                 )
             )
-        return DiagnosisReport(
-            root_cause=str(parsed.get("root_cause", "pod_restart")),
-            summary=str(parsed.get("summary", "")),
-            confidence=float(parsed.get("confidence", 0.3)),
-            evidence=evidence,
-            ruled_out=ruled_out,
-            suggested_actions=actions,
-            uncertainty=[str(u) for u in parsed.get("uncertainty") or []],
-            iterations=state.rounds,
+        return (
+            DiagnosisReport(
+                root_cause=str(parsed.get("root_cause", "pod_restart")),
+                summary=str(parsed.get("summary", "")),
+                confidence=float(parsed.get("confidence", 0.3)),
+                evidence=evidence,
+                ruled_out=ruled_out,
+                suggested_actions=actions,
+                uncertainty=[str(u) for u in parsed.get("uncertainty") or []],
+                iterations=state.rounds,
+            ),
+            invalid,
         )
 
     def refresh(self, state: DiagnosisState, hypotheses: list[Hypothesis]) -> list[Hypothesis]:

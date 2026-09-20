@@ -476,7 +476,10 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
             name="redis_info",
             tier="read",
             description="Redis INFO for one section: server|clients|memory|persistence|"
-            "stats|replication|cpu|keyspace (default all).",
+            "stats|replication|cpu|keyspace (default all). Allowed Redis commands are "
+            "INFO, ROLE, DBSIZE, CONFIG GET <param>, SLOWLOG GET|LEN, CLIENT LIST|INFO; "
+            "anything else (SET, DEL, FLUSHALL, KEYS, DEBUG, CONFIG SET, EVAL, SLAVEOF) "
+            "is refused and counted as an out-of-scope attempt.",
             params={"pod": f"pod name, e.g. {instance}-0", "section": "INFO section (optional)"},
             fn=redis_info,
             max_result_chars=4000,
@@ -484,7 +487,8 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
         ToolSpec(
             name="redis_slowlog",
             tier="read",
-            description="Last N slowlog entries with execution time in microseconds.",
+            description="Last N slowlog entries with execution time in microseconds. "
+            "Read-only: SLOWLOG RESET is not available.",
             params={"pod": "pod name", "count": "entries to return (<=64)"},
             fn=redis_slowlog,
             max_result_chars=4000,
@@ -492,7 +496,8 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
         ToolSpec(
             name="redis_config_get",
             tier="read",
-            description="CONFIG GET for a parameter, e.g. maxmemory-policy or repl-backlog-size.",
+            description="CONFIG GET for a parameter, e.g. maxmemory-policy or "
+            "repl-backlog-size. Only CONFIG GET is allowed; CONFIG SET/REWRITE is not.",
             params={"pod": "pod name", "param": "parameter name"},
             fn=redis_config_get,
             max_result_chars=2000,
@@ -500,8 +505,11 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
         ToolSpec(
             name="redis_query",
             tier="read",
-            description="Run one whitelisted Redis command: INFO, ROLE, DBSIZE, "
-            "CONFIG GET <p>, SLOWLOG GET, CLIENT LIST. Anything else is refused.",
+            description="Run one whitelisted Redis command. Complete allow-list: INFO, "
+            "ROLE, DBSIZE, CONFIG GET <param>, SLOWLOG GET, SLOWLOG LEN, CLIENT LIST, "
+            "CLIENT INFO. Everything else is refused and counted as an out-of-scope "
+            "attempt (SET, DEL, KEYS, FLUSHALL, FLUSHDB, DEBUG, CONFIG SET, CONFIG "
+            "REWRITE, EVAL, SCRIPT, MONITOR, SLAVEOF, REPLICAOF, CLIENT KILL).",
             params={"pod": "pod name", "command": "command line"},
             fn=redis_query,
             max_result_chars=4000,

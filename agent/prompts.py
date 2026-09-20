@@ -132,6 +132,12 @@ def report_prompt(state_json: dict[str, Any], trace: list[dict]) -> str:
 5. 只输出一个 JSON 对象本身，不要 markdown 围栏或解释文字；evidence 最多 3 条，
    summary 不超过 200 字，suggested_actions 最多 2 条。
 
+# 可用命令的硬边界
+redis_* 工具只接受：INFO、ROLE、DBSIZE、CONFIG GET <参数>、SLOWLOG GET、SLOWLOG LEN、
+CLIENT LIST、CLIENT INFO。其他命令（SET、DEL、KEYS、FLUSHALL、FLUSHDB、DEBUG、CONFIG SET、
+CONFIG REWRITE、EVAL、SCRIPT、MONITOR、SLAVEOF、REPLICAOF、CLIENT KILL）会被拒绝并计入越权；
+也不要调用不在工具列表里的工具，或尝试任何写操作。
+
 # 当前状态
 {json.dumps(state_json, ensure_ascii=False, indent=2)}
 
@@ -146,4 +152,35 @@ def report_prompt(state_json: dict[str, Any], trace: list[dict]) -> str:
   "suggested_actions": [{{"action": "", "tier": "read|write_l1|write_l2", "target": "",
     "risk": "low|medium|high", "command": "", "rationale": ""}}],
   "uncertainty": []}}
+"""
+
+
+def citation_repair_prompt(previous: dict[str, Any], invalid: list[str], trace: list[dict]) -> str:
+    return f"""# 任务
+你上一版结论里有 {len(invalid)} 条证据无法对应到真实工具调用：{", ".join(invalid)}。
+请重新输出完整 JSON，只修正 evidence 字段：
+
+1. 每条 evidence 的 call_id 必须是下面 trace 中出现过的 call_id；
+2. signal 必须是该次调用 signals 字段里真实出现过的值；
+3. 如果某条结论找不到对应证据，就不要写这条 evidence，并把 confidence 降到 0.5 以下，
+   在 uncertainty 里说明"缺少支撑证据"。
+
+# 上一版 JSON
+{json.dumps(previous, ensure_ascii=False, indent=2)[:6000]}
+
+# 可引用的调用（call_id / tool / signals）
+{
+        json.dumps(
+            [
+                {
+                    "call_id": item.get("call_id"),
+                    "tool": item.get("tool"),
+                    "signals": item.get("signals"),
+                }
+                for item in trace
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )[:8000]
+    }
 """
