@@ -68,7 +68,7 @@
     "category": "slow_query",
     "source": "Redis 官方文档 - Latency troubleshooting / SLOWLOG",
     "symptom": "p99 延迟飙升，SLOWLOG 里有高复杂度命令",
-    "body": "## 现象\n\n- 应用侧超时增多，`redis_commands_duration_seconds` p99 明显升高。\n- SLOWLOG 里有 `KEYS`、`SORT`、`HGETALL`、`SMEMBERS` 这类 O(N) 命令。\n- 与 CPU 受限的区别：Redis 自己记录到慢日志，说明它拿到了 CPU，只是执行得慢。\n\n## 排查步骤\n\n1. `redis-cli SLOWLOG GET 10`：看 duration_us 与被执行的命令。\n2. `redis-cli SLOWLOG LEN`：判断慢查询是否持续产生。\n3. `redis-cli INFO memory`：确认是否伴随大 key 与内存上涨。\n4. 用 `CLIENT LIST` 定位来源客户端 IP，找到发出慢命令的调用方。\n\n## 常见原因\n\n- 客户端误用 `KEYS` 扫全库、对大集合做 `SMEMBERS`/`HGETALL`。\n- 大 key（单 key 上百万元素）导致单命令耗时线性增长。\n- 过期 key 集中释放（同一秒大量 key 过期）。\n\n## 处置\n\n- 推动调用方用 `SCAN` 代替 `KEYS`，拆分大 key，给慢命令加限流。\n- 只读工具不会去执行 `KEYS`，也建议不要在生产上手工执行它。\n\n## 坑\n\n- 只看延迟指标容易把慢查询和 CPU 资源问题搞混；慢日志才是决定性证据。",
+    "body": "## 现象\n\n- 应用侧超时增多，`redis_commands_duration_seconds` p99 明显升高。\n- SLOWLOG 里有 `KEYS`、`SORT`、`HGETALL`、`SMEMBERS` 这类 O(N) 命令。\n- 与 CPU 受限的区别：Redis 自己记录到慢日志，说明它拿到了 CPU，只是执行得慢。\n\n## 排查步骤\n\n1. `redis-cli SLOWLOG GET 10`：看 duration_us 与被执行的命令。\n2. `redis-cli SLOWLOG LEN`：判断慢查询是否持续产生。\n3. `redis-cli INFO memory`：确认是否伴随大 key 与内存上涨。\n4. 用 `CLIENT LIST` 定位来源客户端 IP，找到发出慢命令的调用方。\n\n## 常见原因\n\n- 客户端误用 `KEYS` 扫全库、对大集合做 `SMEMBERS`/`HGETALL`。\n- 大 key（单 key 上百万元素）导致单命令耗时线性增长。\n- 过期 key 集中释放（同一秒大量 key 过期）。\n\n## 处置\n\n- 推动调用方用 `SCAN` 代替 `KEYS`，拆分大 key，并在调用侧对重命令做节流。\n- 只读工具不会去执行 `KEYS`，也建议不要在生产上手工执行它。\n\n## 坑\n\n- 只看延迟指标容易把慢查询和 CPU 资源问题搞混；慢日志才是决定性证据。",
     "held_out": false
   },
   {
@@ -95,7 +95,7 @@
     "category": "replication_backlog",
     "source": "redis-operator 第 4 章 4.2 / Redis 官方文档 - Replication",
     "symptom": "副本反复 Full resync，sync_full 快速增长",
-    "body": "## 现象\n\n- 副本日志多次出现 `Full resync from master`。\n- `INFO stats` 里 `sync_full` 快速增长，`sync_partial_ok` 很少。\n- 主从链路时断时续，但每次都能恢复（与持续性的链路中断不同）。\n\n## 排查步骤\n\n1. `redis-cli INFO stats`：对比 `sync_full` 与 `sync_partial_ok`。\n2. `redis-cli CONFIG GET repl-backlog-size`：backlog 太小会导致短暂断连后无法做部分重同步。\n3. `redis-cli CONFIG GET repl-timeout`：超时过小同样会触发频繁重连。\n4. 看主节点 `INFO replication` 的 `repl_backlog_histlen` 是否被写满。\n\n## 常见原因\n\n- `repl-backlog-size` 默认 1MB，写入量大时几秒钟就写满。\n- 网络抖动加 backlog 不够，每次都退化成全量同步。\n- `repl-timeout` 设置过激（例如 5s），把正常的网络抖动当成断链。\n\n## 处置\n\n- 调大 `repl-backlog-size`（例如 64mb）并适当放宽 `repl-timeout`（L2，给建议命令）。\n\n## 坑\n\n- 全量同步会把主节点内存与网络打满，形成正反馈；越晚处理越糟。",
+    "body": "## 现象\n\n- 副本日志多次出现 `Full resync from master`。\n- `INFO stats` 里 `sync_full` 快速增长，`sync_partial_ok` 很少。\n- 主从链路时断时续，但每次都能恢复（与持续性的链路中断不同）。\n\n## 排查步骤\n\n1. `redis-cli INFO stats`：对比 `sync_full` 与 `sync_partial_ok`。\n2. `redis-cli CONFIG GET repl-backlog-size`：backlog 太小会导致短暂断连后无法做部分重同步。\n3. `redis-cli CONFIG GET repl-timeout`：超时过小同样会触发频繁重连。\n4. 看主节点 `INFO replication` 的 `repl_backlog_histlen` 是否已经顶到 `repl_backlog_size`。\n\n## 常见原因\n\n- `repl-backlog-size` 默认 1MB，写入量大时几秒钟就会被消耗掉。\n- 网络抖动加 backlog 不够，每次都退化成全量同步。\n- `repl-timeout` 设置过激（例如 5s），把正常的网络抖动当成断链。\n\n## 处置\n\n- 调大 `repl-backlog-size`（例如 64mb）并适当放宽 `repl-timeout`（L2，给建议命令）。\n\n## 坑\n\n- 全量同步会把主节点内存与网络打满，形成正反馈；越晚处理越糟。",
     "held_out": false
   },
   {

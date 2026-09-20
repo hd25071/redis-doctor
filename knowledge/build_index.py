@@ -39,7 +39,10 @@ def load_chunks(directory: Path | str = HANDBOOK) -> list[Chunk]:
                 chunk_id=meta.get("id", path.stem),
                 title=meta.get("title", path.stem),
                 category=meta.get("category", "general"),
-                source=meta.get("source", str(path.relative_to(REPO_ROOT))),
+                # Always POSIX separators: the index is generated in CI and
+                # compared byte-for-byte, so it must not depend on the platform
+                # that happened to build it.
+                source=meta.get("source", path.relative_to(REPO_ROOT).as_posix()),
                 symptom=meta.get("symptom", ""),
                 body=body.strip(),
                 held_out=bool(meta.get("held_out", False)),
@@ -57,6 +60,7 @@ def build_index(
     output.write_text(
         json.dumps([c.to_json() for c in chunks], ensure_ascii=False, indent=2),
         encoding="utf-8",
+        newline="\n",
     )
     return output, chunks
 

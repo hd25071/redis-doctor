@@ -1,0 +1,7 @@
+# Keep the repository line-ending neutral so generated files can be compared
+# byte-for-byte in CI regardless of the platform they were produced on.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+
