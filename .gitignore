@@ -24,3 +24,7 @@ eval/results/*.tmp.json
 k3s.yaml
 *.kubeconfig
 *-kubeconfig
+
+# IDE
+.idea/
+.vscode/
