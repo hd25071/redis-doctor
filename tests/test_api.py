@@ -44,10 +44,10 @@ def test_webhook_diagnoses_and_deduplicates(client) -> None:
                     "alertname": "KubePodOOMKilled",
                     "namespace": "demo",
                     "instance": "demo",
-                    "pod": "demo-0",
+                    "pod": "redis-demo-0",
                     "severity": "critical",
                 },
-                "annotations": {"summary": "demo-0 被 OOMKilled 3 次"},
+                "annotations": {"summary": "redis-demo-0 被 OOMKilled 3 次"},
             }
         ]
     }
@@ -63,7 +63,7 @@ def test_sandbox_scenario_diagnosis_and_approval_flow(client) -> None:
     response = client.post(
         "/diagnose",
         json={
-            "alert_text": "[P1] KubePodOOMKilled namespace=demo pod=demo-0 OOMKilled x3",
+            "alert_text": "[P1] KubePodOOMKilled namespace=demo pod=redis-demo-0 OOMKilled x3",
             "sandbox_scenario": "S02",
             "variant": "D",
         },
@@ -83,7 +83,7 @@ def test_sandbox_scenario_diagnosis_and_approval_flow(client) -> None:
     ).json()
     assert decided["status"] == "approved"
     assert decided["executed"] is True
-    assert decided["target"] == "demo-0"
+    assert decided["target"] == "redis-demo-0"
     assert client.get("/approvals").json()["pending"] == []
 
 
@@ -91,7 +91,7 @@ def test_denied_approval_executes_nothing(client) -> None:
     client.post(
         "/diagnose",
         json={
-            "alert_text": "[P1] KubePodOOMKilled pod=demo-0 OOMKilled x3",
+            "alert_text": "[P1] KubePodOOMKilled pod=redis-demo-0 OOMKilled x3",
             "sandbox_scenario": "S02",
         },
     )

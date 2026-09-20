@@ -59,6 +59,7 @@ class ToolContext:
                 instance=self.settings.instance,
                 username=self.settings.redis_acl_user,
                 password=self.settings.redis_acl_password,
+                port_forward_base=self.settings.redis_port_forward_base,
             )
         assert self.cluster is not None
         return SandboxRedisBackend(self.cluster)

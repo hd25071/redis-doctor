@@ -3,11 +3,11 @@ name: 主节点 Pod 被删除
 category: pod_restart
 severity: P1
 held_out: false
-summary: 人为删除 demo-0，工作负载自愈但期间主从复制中断、副本发生全量同步。
+summary: 人为删除 redis-demo-0，工作负载自愈但期间主从复制中断、副本发生全量同步。
 alert: |
   [P1] RedisMasterPodMissing
-  namespace=demo instance=demo pod=demo-0
-  summary: demo-0 在最近 5 分钟内消失后被 StatefulSet 重新创建，重建期间主节点不可用。
+  namespace=demo instance=demo pod=redis-demo-0
+  summary: redis-demo-0 在最近 5 分钟内消失后被 StatefulSet 重新创建，重建期间主节点不可用。
   labels: alertname=RedisMasterPodMissing, severity=critical, cluster=k3s-demo
 symptom_keywords: [restart, replication, latency]
 required_signals: [pod_recreated_recently]
@@ -17,15 +17,15 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: delete_master_pod
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 recover_sim:
   - op: restore_pod_age
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 inject_kubectl:
-  - kubectl delete pod demo-0 -n demo
-  - kubectl wait --for=condition=Ready pod/demo-0 -n demo --timeout=120s
+  - kubectl delete pod redis-demo-0 -n demo
 recover_kubectl:
-  - kubectl rollout status statefulset/demo -n demo --timeout=180s
-kubectl_verified: false
-notes: 重建后 demo-0 是空数据集，副本需要重新同步；这一点必须在结论里说清楚。
-
+  - kubectl wait --for=condition=Ready pod/redis-demo-0 -n demo --timeout=180s
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
+kubectl_verified: true
+verification_note: 2026-09-20 在 k3s v1.30.4 + redis-operator:dev 上验证通过
+notes: 重建后 redis-demo-0 是空数据集，副本需要重新同步；这一点必须在结论里说清楚。

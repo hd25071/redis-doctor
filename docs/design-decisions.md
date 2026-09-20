@@ -1,94 +1,69 @@
-# 设计决策
+# 设计说明
 
-按"问题 → 选择 → 代价 → 什么时候该改回去"写，和 redis-operator 第 4 章同一体裁。
+记录几处实现取舍和真机上踩到的坑。每条给出选择、代价，以及什么时候应该改回去。
 
-## 1. 先做故障实验室，再做 Agent
+## 沙箱后端是默认值
 
-**问题**：如果先写 Agent，没有标准答案，"这个 Agent 准不准"就无从谈起。
+`RD_BACKEND=sandbox` 用一个显式状态对象渲染 Pod 状态、事件、describe、日志、INFO 与指标样本，
+故障注入只改这个对象。真实集群是 `RD_BACKEND=real`。
 
-**选择**：16 类故障先落地成 YAML（注入、恢复、告警文本、标准根因、必须观察到的证据），
-评测 harness 直接读这些文件。Agent 是第二个被写出来的东西。
+原因：CI、演示和评测都需要在没有集群的机器上跑；本项目的开发机上同时跑着业务容器。
+代价：沙箱信号确定且干净，准确率高于真实集群。对外结论应以真实集群复测为准
+（`docs/real-cluster.md`）。
 
-**代价**：注入脚本和 Agent 都要维护；新增一类故障要同时改 YAML 和 ops。
+## 证据信号由工具层产出
 
-**证据**：`tests/test_faultlab.py` 对 16 个场景逐个断言"注入后必须可观测、恢复后必须干净、
-标准证据必须能被工具观察到"。任何一个场景失去可观测性，CI 立刻变红。
+每个工具在返回时抽取一组机器可判定的信号（`pod_oom_killed`、`replica_link_down`…），
+场景声明必须观察到的信号，评测按信号算召回与幻觉率。模型自述不算证据。
 
-## 2. 默认后端是沙箱，而不是宿主机上的集群
+代价：新增一类故障通常要在 `tools/*.py` 增加一条抽取规则。
 
-**问题**：项目要能在任何一台机器上复现，但不能影响这台机器上已有的业务容器
-（开发机上就跑着业务栈与一套 monitoring-stack）。
+## 只有 L1 写操作可执行
 
-**选择**：默认 `RD_BACKEND=sandbox`，用一个显式状态对象渲染出与真实集群同形态的可观测面
-（Pod 状态、事件、describe、日志、INFO、Prometheus 样本）。真实集群是 `RD_BACKEND=real`。
+诊断循环的工具目录里没有写工具。L1（delete pod）进入审批闸门，人工批准后由 actuator 身份执行，
+随后回查 Pod 就绪数与复制链路；L2（改 CR、扩容）只生成命令。
 
-**代价**：沙箱的信号是"干净"的，因此沙箱上的准确率高于真实集群（见"已知限制"）。
+## 手册不收录 held-out 故障
 
-**什么时候该改回去**：沙箱只用于 CI/演示/回归；任何对外宣称的效果都必须有真实 k3s 上的
-复测结果，`make eval-full` 就是为这一步准备的。
+手册覆盖 12 类故障加 2 篇通用排障；网络阻断、磁盘写满、CPU 限流、探针错误完全不写入，
+作为泛化对照。`tests/test_kb.py` 扫描关键词，出现即失败。代价是 C 组在 held-out 上必然吃亏。
 
-## 3. 证据信号是工具层的输出，不是模型的自述
+## 用编号 SQL 迁移而不是 Alembic
 
-**问题**："模型说它看到了 OOMKilled"和"工具确实返回了 OOMKilled"是两件事。
+`api/store.py` 用编号迁移脚本（`schema_migrations` 表）。当前 schema 没有 ORM 与 autogenerate
+需求，引入 Alembic 只增加一处需要同步的配置。schema 复杂到需要 downgrade 时应换回 Alembic。
 
-**选择**：每个工具在返回时抽取一组机器可判定的信号（`pod_oom_killed`、
-`replica_link_down`、`cpu_throttling`…），场景里声明必须观察到的信号，评测按信号算召回。
+## 轨迹 UI 用服务端渲染
 
-**代价**：新增一类故障往往要在 `tools/*.py` 里加一条抽取规则（一条正则或一次字段判断）。
+FastAPI 直接渲染 `/ui`（列表、详情、审批页），没有额外依赖和端口。需要交互式筛选时
+更适合换成 Streamlit。
 
-**收益**：幻觉率、证据召回都能自动算，且不依赖人工判官打分。
+## 真机踩坑记录
 
-## 4. 只有 L1 写操作可执行，而且必须经过审批闸门
+1. **对象命名**：operator 生成的 StatefulSet 是 `redis-<name>`，Pod 是 `redis-<name>-<i>`，
+   PVC 是 `data-redis-<name>-<i>`，而 Service 是 `<name>` 与 `<name>-headless`。
+   沙箱最初按 `demo-0` 建模，接真机后统一改为 operator 的真实命名
+   （`sandbox/cluster.py` 里的 `pod_name/sts_name/pvc_name`）。
 
-**问题**：自动修复很吸引人，但"Agent 自己删 Pod"在生产里是不可接受的风险。
+2. **工具注册表的参数名**：`ToolRegistry.call(name, **kwargs)` 的第一参数最初叫 `name`，
+   与 `k8s_get_resource(kind, name)` 冲突，报 `got multiple values for argument 'name'`，
+   表现为整条诊断返回 error。改为 `tool_name`。
 
-**选择**：写操作分两级；诊断循环拿到的工具目录里**根本看不到写工具**
-（`catalog(allow_write=False)`）。L1（delete pod）在结论里生成动作 → 挂起为审批请求 →
-人工批准后由 `doctor-actuator` 身份执行 → 立即回查 Pod 与复制链路。
-L2（改 CR、扩容）只生成命令，不执行。
+3. **陈旧事件**：Kubernetes 事件默认保留约 1 小时。一次已恢复的 ImagePullBackOff 事件让
+   之后 15 分钟内的诊断都判成 image_pull。现在事件带 `ageSeconds`，超过 900 秒的事件
+   不能作为故障证据（改为产生 `stale_event_evidence`）。
 
-**代价**：端到端"自动恢复"要人参与一步，演示时必须说明这是刻意的。
+4. **版本回滚留下卡住的 Pod**：把 `spec.version` 改回正确标签后，处于 ImagePullBackOff
+   的 Pod 不会被自动替换（StatefulSet 有序滚动在等它 Ready），恢复必须额外删除该 Pod。
+   S06 的 `recover_kubectl` 已包含这一步。
 
-**证据**：`tests/test_agent_graph.py::test_approval_gate_blocks_until_a_human_decides`
-与 `tests/test_api.py::test_denied_approval_executes_nothing`。
+5. **宿主机形态的 DNS**：agent 在集群外时，`redis-<name>-<i>.<name>-headless...` 不可解析，
+   Pod IP 也不可达，需要 `kubectl port-forward`（`RD_REDIS_PORT_FORWARD_BASE`）。
 
-## 5. 知识库不写 held-out 故障的答案
+6. **ACL 不落盘**：Redis 的 ACL 用户只存在内存中，operator 未提供 `aclfile`，
+   因此 Pod 重启后 `doctor` 用户消失，必须重跑 ACL Job。这也是 S07 恢复步骤的一部分。
 
-**问题**：如果手册里有全部 16 类故障的处置步骤，RAG 高分只能说明它背下了答案。
-
-**选择**：手册覆盖 12 类 + 2 篇通用排障；S04（网络阻断）、S11（磁盘写满）、
-S13（CPU 限流）、S15（探针错误）完全不写进手册，作为 held-out 对照。
-`tests/test_kb.py` 会扫描手册，出现 held-out 的关键词就让 CI 失败。
-
-**代价**：held-out 场景在 C 组必然吃亏，C 的数字看起来不如 D。
-
-**收益**：能回答"RAG 到底提升了多少、在没见过的问题上有没有提升"——
-本项目的实测是：C 在手册覆盖类别上 100%、held-out 上 75%；D 两组都是 100%。
-
-## 6. 用编号 SQL 迁移，而不是 Alembic
-
-**问题**：计划里写的是 Alembic。
-
-**选择**：`api/store.py` 里用 40 行编号迁移（`schema_migrations` 表）。理由是这套 schema
-没有 ORM、没有 autogenerate 场景，引入 Alembic 只增加一处需要同步的配置。
-
-**代价**：没有 downgrade、没有 autogenerate；schema 复杂到需要它们时应立刻换成 Alembic。
-
-**记录原因**：这是一个偏离计划的选择，写在这里以便评审时质询。
-
-## 7. 轨迹 UI 用服务端渲染，而不是 Streamlit
-
-**问题**：演示需要展示完整轨迹。
-
-**选择**：FastAPI 直接渲染 `/ui`（列表 + 详情 + 审批页），零额外依赖、零额外端口。
-
-**代价**：没有交互式筛选/图表；如果要做"面试现场随手切维度"的演示，Streamlit 更合适。
-
-## 附：一个真实踩坑
-
-`ToolRegistry.call(name, **kwargs)` 最初把第一个参数命名为 `name`。当工具本身有 `name`
-参数时（`k8s_get_resource(kind, name)`），调用会抛
-`got multiple values for argument 'name'`——一个只在特定工具上触发的静默路由错误，
-表现为"整条诊断返回 error"。修法是把参数改名为 `tool_name`，并在 `tests/test_tools.py`
-里覆盖带 `name` 参数的工具。教训：白名单/路由层的第一参数不要用常见字段名。
+7. **Windows 上的命令执行**：场景里的 kubectl 命令使用 POSIX 引号（`-p '{"json"}'`），
+   `shell=True` 在 Windows 会交给 cmd.exe，单引号不被剥离，导致所有带引号的注入命令失败。
+   `faultlab/runner.run_shell` 现在优先使用可用的 POSIX shell，否则用 `shlex` 直接执行。
 

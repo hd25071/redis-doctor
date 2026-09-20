@@ -74,6 +74,7 @@ class Settings:
     prom_url: str = ""
     redis_acl_user: str = "doctor"
     redis_acl_password: str = ""
+    redis_port_forward_base: int = 0
     # api
     webhook_token: str = ""
     alert_cooldown_seconds: int = 900
@@ -106,6 +107,7 @@ class Settings:
             prom_url=os.environ.get("RD_PROM_URL", ""),
             redis_acl_user=os.environ.get("RD_REDIS_ACL_USER", "doctor"),
             redis_acl_password=os.environ.get("RD_REDIS_ACL_PASSWORD", ""),
+            redis_port_forward_base=_int("RD_REDIS_PORT_FORWARD_BASE", 0),
             webhook_token=os.environ.get("RD_WEBHOOK_TOKEN", ""),
             alert_cooldown_seconds=_int("RD_ALERT_COOLDOWN_SECONDS", 900),
             data_dir=os.environ.get("RD_DATA_DIR", "data"),

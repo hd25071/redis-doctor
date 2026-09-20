@@ -27,11 +27,14 @@ def _kubectl(args: list[str], timeout: int = 20) -> tuple[int, str]:
 
 def cluster_checks() -> int:
     """Everything a real deployment must satisfy before it is trusted."""
-    checks: list[tuple[str, bool, str]] = []
+    # Third element: "fail" for hard requirements, "skip" for components that
+    # only exist in the in-cluster form (form B). A host-run agent against a
+    # cluster without the monitoring stack is a supported configuration.
+    checks: list[tuple[str, bool, str, str]] = []
 
     code, out = _kubectl(["get", "pods", "-n", NAMESPACE, "-o", "json"])
     if code != 0:
-        checks.append(("诊断命名空间可读", False, out))
+        checks.append(("诊断命名空间可读", False, out, "fail"))
     else:
         pods = json.loads(out)["items"]
         ready = [
@@ -40,9 +43,11 @@ def cluster_checks() -> int:
             if p["status"].get("phase") == "Running"
             and all(c.get("ready") for c in p["status"].get("containerStatuses", []) or [])
         ]
-        checks.append((f"demo 命名空间 Pod 就绪 ({len(ready)}/{len(pods)})", len(ready) > 0, ""))
-        redis_pods = [p for p in pods if p["metadata"]["name"].startswith("demo-")]
-        checks.append((f"Redis Pod 数量 = 3 ({len(redis_pods)})", len(redis_pods) == 3, ""))
+        checks.append(
+            (f"demo 命名空间 Pod 就绪 ({len(ready)}/{len(pods)})", len(ready) > 0, "", "fail")
+        )
+        redis_pods = [p for p in pods if p["metadata"]["name"].startswith("redis-demo-")]
+        checks.append((f"Redis Pod 数量 = 3 ({len(redis_pods)})", len(redis_pods) == 3, "", "fail"))
 
     code, out = _kubectl(["get", "redis.ops.example.com", "demo", "-n", NAMESPACE, "-o", "json"])
     if code == 0:
@@ -52,17 +57,34 @@ def cluster_checks() -> int:
                 f"Redis CR phase={status.get('phase')} ready={status.get('readyReplicas')}",
                 status.get("readyReplicas") == 3,
                 "",
+                "fail",
             )
         )
     else:
-        checks.append(("Redis CR 可读（redis-operator 已部署）", False, out))
+        checks.append(("Redis CR 可读（redis-operator 已部署）", False, out, "fail"))
 
-    for label, args, keep in (
-        ("Prometheus 可达", ["get", "svc", "-n", "monitoring"], True),
-        ("Agent Deployment 存在", ["get", "deploy", "-n", AGENT_NAMESPACE], True),
+    # Optional components: only meaningful in the in-cluster deployment form.
+    for label, args, namespace in (
+        ("monitoring 命名空间存在（指标工具可用）", ["get", "ns", "monitoring"], "monitoring"),
+        (
+            "Agent Deployment 存在（集群内形态）",
+            ["get", "deploy", "-n", AGENT_NAMESPACE],
+            AGENT_NAMESPACE,
+        ),
     ):
         code, out = _kubectl(args)
-        checks.append((label, code == 0 and (bool(out) if keep else True), out if code else ""))
+        if code == 0:
+            checks.append((label, True, "", "fail"))
+        else:
+            checks.append(
+                (
+                    f"{label} [未部署，跳过]",
+                    True,
+                    "host-run agent form (RD_BACKEND=real + kubeconfig)",
+                    "skip",
+                )
+            )
+        del namespace
 
     return _report(checks)
 
@@ -84,24 +106,38 @@ def rbac_checks() -> int:
         ("actuator 可以删除 Pod", actuator, ["delete", "pod", "-n", NAMESPACE], "yes"),
         ("actuator 不能读取 Secret", actuator, ["get", "secret", "-n", NAMESPACE], "no"),
     ]
-    checks: list[tuple[str, bool, str]] = []
+    checks: list[tuple[str, bool, str, str]] = []
     for label, subject, action, expected in expectations:
         code, out = _kubectl(["auth", "can-i", *action, f"--as={subject}"])
         observed = out.strip().lower()
-        checks.append((label, code == 0 and observed == expected, f"got '{out.strip()}'"))
+        # `kubectl auth can-i` exits 1 when the answer is "no"; that is a
+        # successful check, not a failed command. Only an error response is a
+        # real failure of the check itself.
+        if observed.startswith("error") or not observed:
+            checks.append((label, False, out.strip(), "fail"))
+            continue
+        checks.append((label, observed == expected, f"got '{out.strip()}'", "fail"))
+        del code
     return _report(checks)
 
 
-def _report(checks: list[tuple[str, bool, str]]) -> int:
+def _report(checks: list[tuple[str, bool, str, str]]) -> int:
     failures = 0
-    for label, ok, detail in checks:
-        mark = "PASS" if ok else "FAIL"
+    skipped = 0
+    for label, ok, detail, kind in checks:
+        mark = "SKIP" if kind == "skip" else ("PASS" if ok else "FAIL")
         line = f"[{mark}] {label}"
-        if detail and not ok:
+        if detail and not ok and kind != "skip":
             line += f"  ({detail[:160]})"
+        elif kind == "skip" and detail:
+            line += f"  ({detail})"
         print(line)
-        failures += 0 if ok else 1
-    print(f"\n{len(checks) - failures}/{len(checks)} 通过")
+        if kind == "skip":
+            skipped += 1
+        else:
+            failures += 0 if ok else 1
+    total = len(checks) - skipped
+    print(f"\n{total - failures}/{total} 通过, {skipped} 跳过")
     return 1 if failures else 0
 
 

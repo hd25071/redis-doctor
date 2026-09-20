@@ -35,6 +35,7 @@ SIGNAL_LABELS: dict[str, str] = {
     "dns_resolution_failure": "log shows master hostname resolution failure",
     "headless_service_missing": "the StatefulSet's headless Service does not exist",
     "resource_missing": "the requested object does not exist",
+    "stale_event_evidence": "an old event (>15m) is present that no longer reflects state",
     "auth_failure": "authentication error (NOAUTH / invalid password)",
     "slow_query_detected": "slowlog contains commands above the latency budget",
     "max_clients_reached": "connected clients at maxclients; new connections refused",

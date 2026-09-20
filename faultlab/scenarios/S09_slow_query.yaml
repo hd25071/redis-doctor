@@ -6,7 +6,7 @@ held_out: false
 summary: 客户端对大 key 执行 KEYS / SORT 等重命令，慢日志与 p99 延迟同时飙升。
 alert: |
   [P2] RedisHighLatency
-  namespace=demo instance=demo pod=demo-0
+  namespace=demo instance=demo pod=redis-demo-0
   summary: redis 命令 p99 延迟 > 500ms 持续 10 分钟，同时应用侧出现超时。
   labels: alertname=RedisHighLatency, severity=warning
 symptom_keywords: [latency]
@@ -16,15 +16,19 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: slow_query_load
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 recover_sim:
   - op: clear_slow_query
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 inject_kubectl:
-  - kubectl exec demo-0 -n demo -- redis-cli --no-auth-warning DEBUG SLEEP 0
-  - kubectl exec demo-0 -n demo -- sh -c 'redis-cli --no-auth-warning -r 500 KEYS "session:*" >/dev/null'
+  - >-
+    kubectl exec redis-demo-0 -n demo -- sh -c 'redis-benchmark -a "$REDIS_PASSWORD"
+    --no-auth-warning -n 200000 -r 2000000 -d 200 set k:__rand_int__ v >/dev/null 2>&1;
+    for i in 1 2 3; do redis-cli -a "$REDIS_PASSWORD" --no-auth-warning KEYS "*" >/dev/null; done'
 recover_kubectl:
-  - kubectl exec demo-0 -n demo -- redis-cli --no-auth-warning SLOWLOG RESET
+  - >-
+    kubectl exec redis-demo-0 -n demo -- sh -c 'redis-cli -a "$REDIS_PASSWORD"
+    --no-auth-warning SLOWLOG RESET; redis-cli -a "$REDIS_PASSWORD" --no-auth-warning FLUSHALL'
 kubectl_verified: false
+verification_note: 命令按真机可用性重写（必须带 AUTH，且要先造出足够大的 keyspace 才会进慢日志）；真机验证结果见 eval/results/real-cluster.json
 notes: 只看延迟无法区分 CPU 限流，必须看慢日志。
-

@@ -46,6 +46,9 @@ def test_no_plaintext_secrets_in_the_repository() -> None:
         "aws key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
         "private key block": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
         "committed demo password": re.compile(r"password:\s*s3cr3t-rd-demo\b"),
+        "kubeconfig credentials": re.compile(
+            r"(client-key-data|certificate-authority-data):\s*[A-Za-z0-9+/=]{40,}"
+        ),
     }
     suspicious = []
     for path in REPO_ROOT.rglob("*"):
@@ -54,6 +57,11 @@ def test_no_plaintext_secrets_in_the_repository() -> None:
         ):
             continue
         if path.suffix.lower() not in {".py", ".yaml", ".yml", ".md", ".toml", ".json", ".sh"}:
+            continue
+        # Local-only artefacts (git-ignored): a kubeconfig exported for a test
+        # run legitimately exists on disk. What must never happen is committing
+        # it, which `test_no_committed_kubeconfig` covers via git ls-files.
+        if path.name in {"k3s.yaml"} or path.suffix == ".kubeconfig":
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for label, pattern in patterns.items():
@@ -65,3 +73,14 @@ def test_no_plaintext_secrets_in_the_repository() -> None:
                 continue
             suspicious.append(f"{path.relative_to(REPO_ROOT)}: {label}")
     assert not suspicious, suspicious
+
+
+def test_no_committed_kubeconfig() -> None:
+    """A kubeconfig carries cluster credentials; check git, not the filesystem."""
+    import subprocess
+
+    tracked = subprocess.run(  # noqa: S603
+        ["git", "ls-files"], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+    ).stdout.splitlines()
+    offenders = [name for name in tracked if "kubeconfig" in name or name.endswith("k3s.yaml")]
+    assert not offenders, offenders

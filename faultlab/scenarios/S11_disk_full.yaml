@@ -6,7 +6,7 @@ held_out: true
 summary: 小容量 PVC 被写满，RDB 保存失败，Redis 进入 MISCONF 拒绝写入。
 alert: |
   [P1] RedisPersistenceFailing
-  namespace=demo instance=demo pvc=data-demo-0
+  namespace=demo instance=demo pvc=data-redis-demo-0
   summary: redis 日志出现 No space left on device 与 MISCONF，写入被拒绝；PVC 使用率 100%。
   labels: alertname=RedisPersistenceFailing, severity=critical
 symptom_keywords: [disk, latency]
@@ -16,14 +16,14 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: fill_disk
-    params: {pvc: data-demo-0, pod: demo-0}
+    params: {pvc: data-redis-demo-0, pod: redis-demo-0}
 recover_sim:
   - op: clear_disk
-    params: {pvc: data-demo-0, pod: demo-0}
+    params: {pvc: data-redis-demo-0, pod: redis-demo-0}
 inject_kubectl:
-  - kubectl exec demo-0 -n demo -- sh -c 'dd if=/dev/zero of=/data/fill bs=1M count=900'
+  - kubectl exec redis-demo-0 -n demo -- sh -c 'dd if=/dev/zero of=/data/fill bs=1M count=950'
 recover_kubectl:
-  - kubectl exec demo-0 -n demo -- rm -f /data/fill
+  - kubectl exec redis-demo-0 -n demo -- sh -c 'rm -f /data/fill; df -h /data | tail -1'
 kubectl_verified: false
+verification_note: 未验证：本机 PVC 为 1Gi，写满需要约 1GB 顺序写；真机验证结果见 eval/results/real-cluster.json
 notes: held-out 场景。
-

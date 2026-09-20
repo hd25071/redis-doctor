@@ -6,7 +6,7 @@ held_out: false
 summary: 把容器内存 limit 调到很低再灌数据，容器被内核 OOMKill 后反复重启。
 alert: |
   [P1] KubePodOOMKilled
-  namespace=demo instance=demo pod=demo-0 container=redis
+  namespace=demo instance=demo pod=redis-demo-0 container=redis
   summary: 容器 redis 最近 10 分钟内被 OOMKilled 3 次，restartCount=3，主节点内存持续贴近 limit。
   labels: alertname=KubePodOOMKilled, severity=critical
 symptom_keywords: [restart, oom]
@@ -17,16 +17,23 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: oom_kill
-    params: {pod: demo-0, restarts: 3, limit: 256Mi}
+    params: {pod: redis-demo-0, restarts: 3, limit: 256Mi}
 recover_sim:
   - op: restore_memory
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 inject_kubectl:
-  - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"256Mi"}]'
-  - kubectl exec demo-0 -n demo -- redis-cli --no-auth-warning -r 3000 -i 0.01 SET oom:test 10000000
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"resources":{"limits":{"memory":"256Mi"}}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
+  - >-
+    kubectl exec redis-demo-0 -n demo -- sh -c 'redis-benchmark
+    -a "$REDIS_PASSWORD" --no-auth-warning -n 400000 -d 2000 set k:__rand_int__ v'
 recover_kubectl:
-  - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"1Gi"}]'
-  - kubectl delete pod demo-0 -n demo
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"resources":{"limits":{"memory":"1Gi"}}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
 kubectl_verified: false
+verification_note: 未在真机验证：真实 OOMKilled 需要把容器内存真正撑爆（分钟级、有丢数据风险），只在沙箱里做了确定性复现
 notes: 关键证据是 lastState.terminated.reason=OOMKilled 与 OOMKilling 事件，而不是"重启次数多"。
-

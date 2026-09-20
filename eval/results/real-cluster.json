@@ -1,0 +1,210 @@
+{
+  "environment": {
+    "cluster": "k3s v1.30.4+k3s1 in Docker (isolated container redis-doctor-k3s, 2 cpu / 3GiB)",
+    "node_allocatable_memory": "5.8Gi (Docker Desktop VM 可见内存)",
+    "diagnosed_workload": "redis-operator:dev, Redis CR demo, 3 replicas, password Secret 已启用",
+    "agent_form": "宿主机运行（RD_BACKEND=real + kubeconfig + kubectl port-forward 16379-16381）",
+    "monitoring": "未部署 Prometheus（指标类证据不可用）",
+    "verified_at": "2026-09-20",
+    "rbac_assertions": "7/7 通过（kubectl auth can-i）",
+    "redis_acl": "doctor 用户 SET/FLUSHALL -> NOPERM；INFO/ROLE/CONFIG GET 正常"
+  },
+  "results": [
+    {
+      "scenario_id": "S01",
+      "category": "pod_restart",
+      "inject_ok": true,
+      "recover_ok": true,
+      "healthy_before": true,
+      "signals_seen": [
+        "kb_hit",
+        "pod_not_ready",
+        "pod_recreated_recently",
+        "replica_link_down"
+      ],
+      "required_signals": [
+        "pod_recreated_recently"
+      ],
+      "predicted": "pod_restart",
+      "inject_outputs": [
+        {
+          "command": "kubectl delete pod redis-demo-0 -n demo",
+          "code": 0,
+          "output": "pod \"redis-demo-0\" deleted from demo namespace"
+        }
+      ],
+      "recover_outputs": [
+        {
+          "command": "kubectl wait --for=condition=Ready pod/redis-demo-0 -n demo --timeout=180s",
+          "code": 0,
+          "output": "pod/redis-demo-0 condition met"
+        },
+        {
+          "command": "kubectl rollout status statefulset/redis-demo -n demo --timeout=180s",
+          "code": 0,
+          "output": "partitioned roll out complete: 3 new pods have been updated..."
+        }
+      ],
+      "error": "",
+      "root_cause_match": true,
+      "required_seen": [
+        "pod_recreated_recently"
+      ],
+      "tool_calls": 9,
+      "blocked": 0,
+      "healthy_after": true,
+      "batch": "real-cluster-a.json"
+    },
+    {
+      "scenario_id": "S06",
+      "category": "image_pull",
+      "inject_ok": false,
+      "recover_ok": false,
+      "healthy_before": true,
+      "signals_seen": [
+        "kb_hit",
+        "metrics_unavailable",
+        "pod_not_ready",
+        "pod_recreated_recently"
+      ],
+      "required_signals": [
+        "image_pull_error"
+      ],
+      "predicted": "pod_restart",
+      "inject_outputs": [
+        {
+          "command": "kubectl patch redis demo -n demo --type=merge -p '{\"spec\":{\"version\":\"7.2.9-typo\"}}'",
+          "code": 1,
+          "output": "Error from server (BadRequest): error decoding patch: json: cannot unmarshal string into Go value of type map[string]interface {}"
+        }
+      ],
+      "recover_outputs": [
+        {
+          "command": "kubectl patch redis demo -n demo --type=merge -p '{\"spec\":{\"version\":\"7.2\"}}'",
+          "code": 1,
+          "output": "Error from server (BadRequest): error decoding patch: json: cannot unmarshal string into Go value of type map[string]interface {}"
+        },
+        {
+          "command": "kubectl rollout status statefulset/redis-demo -n demo --timeout=180s",
+          "code": 0,
+          "output": "partitioned roll out complete: 3 new pods have been updated..."
+        }
+      ],
+      "error": "",
+      "root_cause_match": false,
+      "required_seen": [],
+      "tool_calls": 14,
+      "blocked": 0,
+      "healthy_after": true,
+      "batch": "real-cluster.json"
+    },
+    {
+      "scenario_id": "S12",
+      "category": "insufficient_resources",
+      "inject_ok": true,
+      "recover_ok": true,
+      "healthy_before": true,
+      "signals_seen": [
+        "kb_hit",
+        "metrics_unavailable",
+        "pod_not_ready",
+        "pod_recreated_recently",
+        "stale_event_evidence"
+      ],
+      "required_signals": [
+        "insufficient_resources"
+      ],
+      "predicted": "pod_restart",
+      "inject_outputs": [
+        {
+          "command": "kubectl patch redis demo -n demo --type=merge -p '{\"spec\":{\"resources\":{\"requests\":{\"memory\":\"6Gi\",\"cpu\":\"4\"}}}}'",
+          "code": 0,
+          "output": "redis.ops.example.com/demo patched"
+        },
+        {
+          "command": "kubectl delete pod redis-demo-2 -n demo",
+          "code": 0,
+          "output": "pod \"redis-demo-2\" deleted from demo namespace"
+        }
+      ],
+      "recover_outputs": [
+        {
+          "command": "kubectl patch redis demo -n demo --type=merge -p '{\"spec\":{\"resources\":{\"requests\":{\"memory\":\"256Mi\",\"cpu\":\"100m\"}}}}'",
+          "code": 0,
+          "output": "redis.ops.example.com/demo patched"
+        },
+        {
+          "command": "kubectl rollout status statefulset/redis-demo -n demo --timeout=240s",
+          "code": 0,
+          "output": "Waiting for 1 pods to be ready...\npartitioned roll out complete: 3 new pods have been updated..."
+        }
+      ],
+      "error": "",
+      "root_cause_match": false,
+      "required_seen": [],
+      "tool_calls": 12,
+      "blocked": 0,
+      "healthy_after": true,
+      "batch": "real-cluster-b.json"
+    },
+    {
+      "scenario_id": "S14",
+      "category": "replication_backlog",
+      "inject_ok": true,
+      "recover_ok": true,
+      "healthy_before": true,
+      "signals_seen": [
+        "kb_hit",
+        "metrics_unavailable",
+        "pod_not_ready",
+        "pod_recreated_recently",
+        "stale_event_evidence"
+      ],
+      "required_signals": [
+        "replication_full_resync_storm"
+      ],
+      "predicted": "pod_restart",
+      "inject_outputs": [
+        {
+          "command": "kubectl patch redis demo -n demo --type=merge -p '{\"spec\":{\"config\":{\"repl-backlog-size\":\"16kb\"}}}'",
+          "code": 0,
+          "output": "redis.ops.example.com/demo patched"
+        },
+        {
+          "command": "kubectl rollout status statefulset/redis-demo -n demo --timeout=180s",
+          "code": 0,
+          "output": "Waiting for partitioned roll out to finish: 0 out of 3 new pods have been updated...\nWaiting for 1 pods to be ready...\nWaiting for 1 pods to be ready...\nWaiting for 1 pods to be ready...\nWaiting for partitioned roll out to finish: 1 out of 3 new pods have been updated...\nWaiting for 1 pods to be ready...\nWaiting for 1 pods to be ready...\nWaiting for 1 pods to be ready...\nWaiting for partitioned ro"
+        },
+        {
+          "command": "kubectl delete pod redis-demo-1 -n demo",
+          "code": 0,
+          "output": "pod \"redis-demo-1\" deleted from demo namespace"
+        },
+        {
+          "command": "kubectl wait --for=condition=Ready pod/redis-demo-1 -n demo --timeout=180s",
+          "code": 0,
+          "output": "pod/redis-demo-1 condition met"
+        }
+      ],
+      "recover_outputs": [
+        {
+          "command": "kubectl patch redis demo -n demo --type=merge -p '{\"spec\":{\"config\":{\"repl-backlog-size\":\"1mb\"}}}'",
+          "code": 0,
+          "output": "redis.ops.example.com/demo patched"
+        },
+        {
+          "command": "kubectl rollout status statefulset/redis-demo -n demo --timeout=180s",
+          "code": 0,
+          "output": "Waiting for partitioned roll out to finish: 0 out of 3 new pods have been updated...\nWaiting for 1 pods to be ready...\nWaiting for 1 pods to be ready...\nWaiting for 1 pods to be ready...\nWaiting for partitioned roll out to finish: 1 out of 3 new pods have been updated...\nWaiting for 1 pods to be ready...\nWaiting for 1 pods to be ready...\nWaiting for 1 pods to be ready...\nWaiting for partitioned ro"
+        }
+      ],
+      "error": "",
+      "root_cause_match": false,
+      "required_seen": [],
+      "tool_calls": 9,
+      "blocked": 0,
+      "healthy_after": true,
+      "batch": "real-cluster-b.json"
+    }
+  ]
+}

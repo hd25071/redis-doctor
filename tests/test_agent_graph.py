@@ -96,14 +96,14 @@ def test_l1_action_maps_to_a_structured_call() -> None:
     action = SuggestedAction(
         action="重建 Pod",
         tier="write_l1",
-        command="kubectl delete pod demo-0 -n demo",
+        command="kubectl delete pod redis-demo-0 -n demo",
         risk="medium",
     )
-    assert plan_write_call(action) == ("k8s_delete_pod", {"pod": "demo-0"})
+    assert plan_write_call(action) == ("k8s_delete_pod", {"pod": "redis-demo-0"})
 
 
 def test_standalone_actuator_reverifies(lab, ctx, settings) -> None:
     lab.inject("S02")
-    outcome = execute_approved_action(ctx, "demo-0", settings)
+    outcome = execute_approved_action(ctx, "redis-demo-0", settings)
     assert outcome["ok"] is True
     assert outcome["verification"]["ready"] is True

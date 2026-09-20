@@ -6,8 +6,8 @@ held_out: false
 summary: 指定不存在的 storageClass，PVC 无法供给，Pod 卡在 Pending。
 alert: |
   [P1] KubePersistentVolumeClaimNotBound
-  namespace=demo instance=demo pvc=data-demo-1
-  summary: PVC data-demo-1 在 10 分钟内一直处于 Pending，Pod demo-1 无法调度。
+  namespace=demo instance=demo pvc=data-redis-demo-1
+  summary: PVC data-redis-demo-1 在 10 分钟内一直处于 Pending，Pod redis-demo-1 无法调度。
   labels: alertname=KubePersistentVolumeClaimNotBound, severity=critical
 symptom_keywords: [pending, not_ready]
 required_signals: [pvc_pending, storage_class_missing]
@@ -16,16 +16,16 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: pvc_pending
-    params: {pvc: data-demo-1, pod: demo-1, storage_class: fast-ssd}
+    params: {pvc: data-redis-demo-1, pod: redis-demo-1, storage_class: fast-ssd}
 recover_sim:
   - op: pvc_bound
-    params: {pvc: data-demo-1, pod: demo-1}
+    params: {pvc: data-redis-demo-1, pod: redis-demo-1}
 inject_kubectl:
   - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"add","path":"/spec/volumeClaimTemplates/0/spec/storageClassName","value":"fast-ssd"}]'
-  - kubectl delete pvc data-demo-1 -n demo
-  - kubectl delete pod demo-1 -n demo
+  - kubectl delete pvc data-redis-demo-1 -n demo
+  - kubectl delete pod redis-demo-1 -n demo
 recover_kubectl:
   - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"remove","path":"/spec/volumeClaimTemplates/0/spec/storageClassName"}]'
 kubectl_verified: false
+verification_note: 未验证：redis-operator 只暴露 spec.storageSize，没有 spec.storageClassName；直接改 StatefulSet 会被调谐覆盖。要真注入这一类需要先给 operator 加 storageClassName 支持。
 notes: 关键证据是 ProvisioningFailed 事件里的 storageclass not found，而不是"Pod Pending"本身。
-

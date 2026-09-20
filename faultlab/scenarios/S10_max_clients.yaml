@@ -6,7 +6,7 @@ held_out: false
 summary: 压测客户端占满 maxclients，新连接被拒，业务侧出现 connection refused。
 alert: |
   [P1] RedisMaxClientsReached
-  namespace=demo instance=demo pod=demo-0
+  namespace=demo instance=demo pod=redis-demo-0
   summary: connected_clients 达到 maxclients=10000，10 分钟内 rejected_connections 持续增长。
   labels: alertname=RedisMaxClientsReached, severity=critical
 symptom_keywords: [clients, latency]
@@ -16,14 +16,25 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: exhaust_clients
-    params: {pod: demo-0, clients: 10000}
+    params: {pod: redis-demo-0, clients: 10000}
 recover_sim:
   - op: release_clients
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 inject_kubectl:
-  - sh -c 'for i in $(seq 1 10000); do (exec 3<>/dev/tcp/demo-headless.demo.svc.cluster.local/6379) & done; sleep 600'
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"config":{"maxclients":"16"}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
+  - >-
+    kubectl run redis-doctor-loadgen --image=redis:7.2 -n demo --restart=Never
+    --command -- sh -c 'for i in $(seq 1 40); do
+    (exec 3<>/dev/tcp/redis-demo-0.demo-headless.demo.svc.cluster.local/6379) & done; sleep 900'
 recover_kubectl:
-  - kubectl delete pod loadgen --ignore-not-found -n demo
+  - kubectl delete pod redis-doctor-loadgen -n demo --ignore-not-found --wait=false
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"config":{"maxclients":null}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
 kubectl_verified: false
+verification_note: 用 spec.config.maxclients 把上限降到 16 再制造 40 条连接，避免真机开一万个连接；真机验证结果见 eval/results/real-cluster.json
 notes: ""
-

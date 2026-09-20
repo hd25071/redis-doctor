@@ -6,7 +6,7 @@ held_out: false
 summary: 断链重连时 backlog 太小无法部分重同步，副本反复全量同步，sync_full 暴涨。
 alert: |
   [P1] RedisFullResyncStorm
-  namespace=demo instance=demo pod=demo-1
+  namespace=demo instance=demo pod=redis-demo-1
   summary: 副本 10 分钟内触发多次 Full resync from master，主从链路时断时续。
   labels: alertname=RedisFullResyncStorm, severity=critical
 symptom_keywords: [replication, latency]
@@ -16,16 +16,28 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: shrink_repl_backlog
-    params: {pod: demo-1, size_bytes: 16384}
+    params: {pod: redis-demo-1, size_bytes: 16384}
 recover_sim:
   - op: restore_repl_backlog
-    params: {pod: demo-1, size_bytes: 67108864}
+    params: {pod: redis-demo-1, size_bytes: 67108864}
 inject_kubectl:
   - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"config":{"repl-backlog-size":"16kb"}}}'
-  - kubectl exec demo-1 -n demo -- redis-cli --no-auth-warning DEBUG SLEEP 0
-  - kubectl delete pod demo-1 -n demo
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
+  - >-
+    kubectl exec redis-demo-0 -n demo -- sh -c 'redis-benchmark -a "$REDIS_PASSWORD"
+    --no-auth-warning -n 2000000 -r 2000000 -d 500 set k:__rand_int__ v
+    >/tmp/redis-doctor-load.log 2>&1 & sleep 2'
+  - kubectl delete pod redis-demo-1 -n demo
+  - kubectl wait --for=condition=Ready pod/redis-demo-1 -n demo --timeout=180s
 recover_kubectl:
-  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"config":{"repl-backlog-size":"64mb"}}}'
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"config":{"repl-backlog-size":"1mb"}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
 kubectl_verified: false
+verification_note: >-
+  已在本机 k3s 上跑过：只改 repl-backlog-size 再重启副本，偏移量差距太小，
+  部分重同步仍然成功、没有全量同步风暴（Agent 正确报出的是"Pod 被重建"）。
+  要复现必须让断链窗口内有足够写入把 16kb backlog 冲掉，所以 inject 里补了写入压力，
+  该版本尚未在真机复测。
 notes: 与网络分区的区别是链路能恢复但反复全量同步。
-

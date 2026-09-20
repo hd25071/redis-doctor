@@ -34,88 +34,107 @@ from agent.state import (
 from agent.variants import Variant
 from tools.signals import evidence_signals
 
-#: category -> which observed signals prove it (hard) or merely hint at it (soft),
-#: and which observations contradict it.
+#: category -> which observed signals prove it (hard) or merely hint at it
+#: (soft), which observations contradict it, and how specific the explanation
+#: is. ``priority`` breaks ties between two explanations that are both
+#: supported: an explicit fault (a pod was deleted, a config is invalid) beats
+#: one inferred from a downstream symptom (the replication link is down).
 CATEGORY_RULES: dict[str, dict[str, set[str]]] = {
     "pod_restart": {
         "hard": {"pod_recreated_recently"},
         "soft": {"pod_restart"},
         "contradicts": {"pod_oom_killed", "invalid_config_directive"},
+        "priority": 2,
     },
     "oom_killed": {
         "hard": {"pod_oom_killed"},
         "soft": {"pod_restart", "pod_crashloop"},
         "contradicts": {"invalid_config_directive"},
+        "priority": 2,
     },
     "maxmemory_reached": {
         "hard": {"maxmemory_reached_noeviction"},
         "soft": {"memory_high_usage", "latency_degraded"},
         "contradicts": set(),
+        "priority": 1,
     },
     "network_partition": {
         "hard": {"replica_link_down"},
         "soft": {"latency_degraded"},
         "contradicts": {"dns_resolution_failure", "auth_failure"},
+        "priority": 0,
     },
     "storage_provision": {
         "hard": {"pvc_pending"},
         "soft": {"storage_class_missing", "pod_pending_scheduling"},
         "contradicts": {"image_pull_error"},
+        "priority": 2,
     },
     "image_pull": {
         "hard": {"image_pull_error"},
         "soft": {"pod_pending_scheduling"},
         "contradicts": set(),
+        "priority": 2,
     },
     "auth_failure": {
         "hard": {"auth_failure"},
         "soft": {"pod_crashloop"},
         "contradicts": set(),
+        "priority": 2,
     },
     "dns_resolution": {
         "hard": {"dns_resolution_failure"},
         "soft": {"headless_service_missing", "replica_link_down"},
         "contradicts": set(),
+        "priority": 2,
     },
     "slow_query": {
         "hard": {"slow_query_detected"},
         "soft": {"latency_degraded"},
         "contradicts": {"cpu_throttling"},
+        "priority": 0,
     },
     "max_clients": {
         "hard": {"max_clients_reached"},
         "soft": {"latency_degraded"},
         "contradicts": set(),
+        "priority": 1,
     },
     "disk_full": {
         "hard": {"disk_full_write_error"},
         "soft": {"persistence_write_error", "disk_nearly_full"},
         "contradicts": set(),
+        "priority": 1,
     },
     "insufficient_resources": {
         "hard": {"insufficient_resources"},
         "soft": {"pod_pending_scheduling"},
         "contradicts": set(),
+        "priority": 2,
     },
     "cpu_throttling": {
         "hard": {"cpu_throttling"},
         "soft": {"latency_degraded", "pod_not_ready"},
         "contradicts": set(),
+        "priority": 1,
     },
     "replication_backlog": {
         "hard": {"replication_full_resync_storm"},
         "soft": {"repl_backlog_small", "replica_link_down", "latency_degraded"},
         "contradicts": set(),
+        "priority": 1,
     },
     "probe_misconfig": {
         "hard": {"readiness_probe_misconfig"},
         "soft": {"pod_not_ready"},
         "contradicts": set(),
+        "priority": 2,
     },
     "invalid_config": {
         "hard": {"invalid_config_directive"},
         "soft": {"pod_crashloop"},
         "contradicts": {"pod_oom_killed"},
+        "priority": 2,
     },
 }
 
@@ -160,7 +179,7 @@ ACTIONS: dict[str, list[tuple[str, str, str, str]]] = {
             "low",
             "kubectl get pods -n demo -l app.kubernetes.io/instance=demo",
         ),
-        ("如需强制重建主节点 Pod", "write_l1", "medium", "kubectl delete pod demo-0 -n demo"),
+        ("如需强制重建主节点 Pod", "write_l1", "medium", "kubectl delete pod redis-demo-0 -n demo"),
     ],
     "oom_killed": [
         (
@@ -173,7 +192,7 @@ ACTIONS: dict[str, list[tuple[str, str, str, str]]] = {
             "重建被 OOMKilled 的主节点 Pod 以恢复服务",
             "write_l1",
             "medium",
-            "kubectl delete pod demo-0 -n demo",
+            "kubectl delete pod redis-demo-0 -n demo",
         ),
     ],
     "maxmemory_reached": [
@@ -215,14 +234,14 @@ ACTIONS: dict[str, list[tuple[str, str, str, str]]] = {
             "low",
             "kubectl get secret redis-password -n demo -o jsonpath='{.data.password}' | wc -c",
         ),
-        ("重建使用错误密码的 Pod", "write_l1", "medium", "kubectl delete pod demo-1 -n demo"),
+        ("重建使用错误密码的 Pod", "write_l1", "medium", "kubectl delete pod redis-demo-1 -n demo"),
     ],
     "dns_resolution": [
         (
             "重建被删除的 Headless Service",
             "write_l1",
             "medium",
-            "kubectl delete pod demo-1 -n demo  # 触发 operator 重新调谐并补建 demo-headless",
+            "kubectl delete pod redis-demo-1 -n demo  # 触发 operator 重新调谐并补建 demo-headless",
         ),
     ],
     "slow_query": [
@@ -230,7 +249,7 @@ ACTIONS: dict[str, list[tuple[str, str, str, str]]] = {
             "定位并优化大 key / 高复杂度命令",
             "read",
             "low",
-            "kubectl exec demo-0 -n demo -- redis-cli SLOWLOG GET 10",
+            "kubectl exec redis-demo-0 -n demo -- redis-cli SLOWLOG GET 10",
         ),
     ],
     "max_clients": [
@@ -291,7 +310,8 @@ ACTIONS: dict[str, list[tuple[str, str, str, str]]] = {
     ],
 }
 
-TARGET_POD = re.compile(r"\b(demo-\d+)\b")
+#: Full pod name, whatever prefix the operator uses (redis-demo-0).
+TARGET_POD = re.compile(r"\b([a-z][a-z0-9-]{0,60}-\d+)\b")
 INSTANCE = re.compile(r"\b(?:instance|实例|redis)[=: ](demo)\b", re.IGNORECASE)
 
 #: Symptom keywords in the alert drive the first probe batch (variant B/C).
@@ -319,7 +339,10 @@ class ReferenceReasoner:
 
     # -- triage ----------------------------------------------------------
     def triage(self, alert_text: str, namespace: str, instance: str) -> Triage:
-        pods = sorted(set(TARGET_POD.findall(alert_text)))
+        # Alerts mention both pods and PVCs (data-redis-demo-0); only pod names
+        # belong in the target list.
+        pattern = re.compile(rf"^(?:redis-)?{re.escape(instance)}-\d+$")
+        pods = sorted({name for name in TARGET_POD.findall(alert_text) if pattern.match(name)})
         keywords = [
             label for pattern, label in SYMPTOM_KEYWORDS if re.search(pattern, alert_text, re.I)
         ]
@@ -397,8 +420,8 @@ class ReferenceReasoner:
         triage = state.triage
         observed = set(state.observed_signals)
         instance = triage.instance or "demo"
-        master = next((p for p in triage.pods if p.endswith("-0")), f"{instance}-0")
-        replicas = [f"{instance}-{i}" for i in (1, 2)] or [f"{instance}-1"]
+        master = next((p for p in triage.pods if p.endswith("-0")), f"redis-{instance}-0")
+        replicas = [f"redis-{instance}-{i}" for i in (1, 2)]
 
         if round_index == 0:
             # Every tool-using variant starts from the same cheap, high-yield
@@ -584,7 +607,7 @@ class ReferenceReasoner:
     # -- report ----------------------------------------------------------
     def report(self, state: DiagnosisState, trace: list[dict]) -> DiagnosisReport:
         observed = evidence_signals(set(state.observed_signals))
-        scored: list[tuple[float, str]] = []
+        scored: list[tuple[float, int, str]] = []
         for category, rules in CATEGORY_RULES.items():
             hard = rules["hard"] & observed
             soft = rules["soft"] & observed
@@ -592,8 +615,8 @@ class ReferenceReasoner:
             if not hard:
                 continue
             score = 2.0 * len(hard) + 1.0 * len(soft) - 2.0 * len(contra)
-            scored.append((score, category))
-        scored.sort(key=lambda item: (-item[0], item[1]))
+            scored.append((score, int(rules.get("priority", 0)), category))
+        scored.sort(key=lambda item: (-item[0], -item[1], item[2]))
 
         if not scored:
             return DiagnosisReport(
@@ -619,7 +642,7 @@ class ReferenceReasoner:
                 root_cause_label=ROOT_CAUSE_LABELS.get(self._best_unresolved(state), ""),
             )
 
-        best_score, winner = scored[0]
+        best_score, _, winner = scored[0]
         top_evidence = CATEGORY_RULES[winner]["hard"] & observed
         evidence = self._evidence(trace, sorted(top_evidence))
         confidence = min(0.95, 0.55 + 0.15 * best_score / 2.0)

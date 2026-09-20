@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -12,6 +15,77 @@ from faultlab.schema import Scenario, load_all, load_scenario
 from sandbox.cluster import REDIS_PORT, SimCluster
 
 DEFAULT_SCENARIOS = Path("faultlab/scenarios")
+
+
+_SHELL_CACHE: list[str | None] = []
+_SHELL_META = re.compile(r"[|&;<>`]|\$\(")
+
+
+def posix_shell() -> str | None:
+    """A *working* POSIX shell, or None.
+
+    The scenario commands use POSIX quoting (``-p '{"json"}'``). On Windows
+    ``shell=True`` hands them to cmd.exe, which does not strip single quotes —
+    that made every quoting-sensitive command fail. Candidates are probed with a
+    real command, because some machines ship a ``bash.exe`` stub (the WSL relay)
+    that exists but cannot run anything.
+    """
+    if _SHELL_CACHE:
+        return _SHELL_CACHE[0]
+    candidates = [os.environ.get("RD_SHELL"), "sh", "bash"]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = shutil.which(candidate) or (candidate if Path(candidate).exists() else None)
+        if not path:
+            continue
+        try:
+            probe = subprocess.run(  # noqa: S603
+                [path, "-c", "echo rd-shell-ok"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0 and "rd-shell-ok" in probe.stdout:
+            _SHELL_CACHE.append(path)
+            return path
+    _SHELL_CACHE.append(None)
+    return None
+
+
+def run_shell(command: str, timeout: int = 300) -> tuple[int, str]:
+    """Run one scenario command, preferring a POSIX shell.
+
+    Without one, commands that need no shell features are split with
+    ``shlex`` and executed directly, so quoting still behaves. Commands that do
+    need a shell (``$VAR``, pipes) fall back to the platform shell and are
+    reported as such.
+    """
+    shell = posix_shell()
+    if shell:
+        argv: list[str] | str = [shell, "-c", command]
+        use_shell = False
+    elif not _SHELL_META.search(command):
+        argv = shlex.split(command)
+        use_shell = False
+    else:
+        argv = command
+        use_shell = True
+    done = subprocess.run(  # noqa: S602,S603 - reviewed scenario command
+        argv,
+        shell=use_shell,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    output = (done.stdout or done.stderr).strip()
+    if use_shell:
+        output = f"(platform shell) {output}"
+    return done.returncode, output
 
 
 class FaultLab:
@@ -122,10 +196,8 @@ class FaultLab:
             if dry_run:
                 outputs.append(f"[dry-run] {command}")
                 continue
-            completed = subprocess.run(  # noqa: S603 - command comes from a reviewed YAML
-                command, shell=True, capture_output=True, text=True, timeout=120, check=False
-            )
-            outputs.append(completed.stdout.strip() or completed.stderr.strip())
+            code, out = run_shell(command, timeout=300)
+            outputs.append(f"[{code}] {out}")
         return outputs
 
 

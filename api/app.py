@@ -322,9 +322,9 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
                 "executed": False,
                 "detail": f"tier {action.tier} is advisory in this MVP; nothing executed",
             }
-        import re as _re
+        from agent.graph import POD_IN_COMMAND
 
-        match = _re.search(r"\bdemo-\d+\b", action.command or "")
+        match = POD_IN_COMMAND.search(action.command or "")
         if match is None:
             raise HTTPException(
                 status_code=422, detail="approved action has no resolvable pod target"

@@ -28,21 +28,15 @@ spec:
             - -c
             - |
               set -e
-              for pod in demo-0 demo-1 demo-2; do
+              # Subcommand rules contain '|', which the shell would read as a
+              # pipe: each one has to be quoted.
+              RULES='+info +role +dbsize "+slowlog|get" "+slowlog|len" "+client|list" "+client|info" "+config|get"'
+              for pod in redis-demo-0 redis-demo-1 redis-demo-2; do
                 host="$pod.demo-headless.demo.svc.cluster.local"
                 echo "configuring ACL on $host"
-                redis-cli -h "$host" -a "$REDIS_PASSWORD" --no-auth-warning ACL SETUSER doctor on \
-                  ">$DOCTOR_PASSWORD" ~* -@all \
-                  +info +role +dbsize +slowlog|get +slowlog|len +client|list +client|info +config|get
+                eval "redis-cli -h \"$host\" -a \"\$REDIS_PASSWORD\" --no-auth-warning \
+                  ACL SETUSER doctor on \">\$DOCTOR_PASSWORD\" ~* -@all $RULES"
+                redis-cli -h "$host" -a "$REDIS_PASSWORD" --no-auth-warning \
+                  ACL LIST | grep -c '^user doctor'
                 redis-cli -h "$host" -a "$REDIS_PASSWORD" --no-auth-warning ACL SAVE || true
               done
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: redis-doctor-acl
-  namespace: demo
-type: Opaque
-stringData:
-  password: CHANGE_ME
-

@@ -30,11 +30,15 @@ from agent.state import (
     SuggestedAction,
 )
 from agent.variants import Variant
+from sandbox.cluster import pod_name
 from tools.base import ToolRegistry
 from tools.context import ToolContext
 from tools.safety import detect_injection
 
 Approver = Callable[[ApprovalRequest, DiagnosisState], bool]
+
+#: Object name at the end of a kubectl command, e.g. redis-demo-0.
+POD_IN_COMMAND = re.compile(r"\b[a-z0-9][a-z0-9-]{0,60}-\d+\b")
 
 
 @dataclass
@@ -265,7 +269,7 @@ class DiagnosisGraph:
         self._absorb(run, pods)
         ready = [p for p in (pods.data or []) if p.get("ready")]
         notes.append(f"ready pods: {len(ready)}/{(pods.data or []) and len(pods.data)}")
-        master = f"{self.settings.instance}-0"
+        master = pod_name(self.settings.instance, 0)
         info = registry.call("redis_info", pod=master, section="replication")
         self._absorb(run, info)
         link_ok = "master_link_status: up" in (info.raw or "") or "role: master" in (info.raw or "")
@@ -296,7 +300,7 @@ def plan_write_call(action: SuggestedAction) -> tuple[str, dict[str, Any]] | Non
     """
     if action.tier != "write_l1":
         return None
-    match = re.search(r"\bdemo-\d+\b", action.command or "")
+    match = re.search(POD_IN_COMMAND, action.command or "")
     if "delete pod" in (action.command or "") and match:
         return "k8s_delete_pod", {"pod": match.group(0)}
     return None
@@ -314,7 +318,7 @@ def execute_approved_action(
     registry = ctx.build_registry(include_kb=False)
     result = registry.call("k8s_delete_pod", __approved__=True, pod=pod)
     verification = registry.call("k8s_get_pods")
-    info = registry.call("redis_info", pod=f"{settings.instance}-0", section="replication")
+    info = registry.call("redis_info", pod=pod_name(settings.instance, 0), section="replication")
     return {
         "ok": result.ok,
         "call": result.to_trace(),

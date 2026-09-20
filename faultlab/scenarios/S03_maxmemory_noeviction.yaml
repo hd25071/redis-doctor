@@ -6,7 +6,7 @@ held_out: false
 summary: maxmemory 调小且策略为 noeviction，写入被拒绝，业务侧报 OOM 错误。
 alert: |
   [P1] RedisWritesRejected
-  namespace=demo instance=demo pod=demo-0
+  namespace=demo instance=demo pod=redis-demo-0
   summary: 应用侧大量写入报错，报错文本为 OOM command not allowed when used memory > 'maxmemory'。
   labels: alertname=RedisWritesRejected, severity=critical
 symptom_keywords: [latency, oom]
@@ -16,15 +16,24 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: set_maxmemory
-    params: {pod: demo-0, maxmemory: "67108864", policy: noeviction}
+    params: {pod: redis-demo-0, maxmemory: "67108864", policy: noeviction}
 recover_sim:
   - op: restore_maxmemory
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 inject_kubectl:
-  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"config":{"maxmemory":"64mb","maxmemory-policy":"noeviction"}}}'
-  - kubectl exec demo-0 -n demo -- redis-cli --no-auth-warning -r 20000 SET k:v 1
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"config":{"maxmemory":"64mb","maxmemory-policy":"noeviction"}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
+  - >-
+    kubectl exec redis-demo-0 -n demo -- sh -c 'redis-benchmark -a "$REDIS_PASSWORD"
+    --no-auth-warning -n 300000 -d 200 set k:__rand_int__ v >/dev/null 2>&1;
+    redis-cli -a "$REDIS_PASSWORD" --no-auth-warning INFO stats | grep errorstat_OOM'
 recover_kubectl:
-  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"config":{"maxmemory":"512mb"}}}'
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"config":{"maxmemory":null,"maxmemory-policy":null}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
 kubectl_verified: false
+verification_note: 命令按 operator 的 spec.config 写；真机验证结果见 eval/results/real-cluster.json
 notes: 与 OOMKilled 的区别在于容器没有被杀，是 Redis 主动拒绝写入。
-

@@ -67,7 +67,7 @@ class SandboxK8sBackend:
         if kind == "pod":
             return cluster.describe_pod(name)
         if kind == "statefulset":
-            if name not in ("", cluster.instance):
+            if name not in ("", cluster.instance, f"redis-{cluster.instance}"):
                 raise KeyError(f"statefulset {name} not found")
             return cluster.describe_statefulset()
         if kind == "pvc":
@@ -115,7 +115,8 @@ class SandboxK8sBackend:
                 f"metadata:\n  name: {cluster.instance}\n  namespace: {namespace}\n"
                 f"spec:\n  mode: replication\n  replicas: {cluster.statefulset['replicas']}\n"
                 f'  version: "{cluster.statefulset.get("version", "7.2")}"\n'
-                f"  storageSize: {cluster.pvcs[f'data-{cluster.instance}-0'].capacity}\n"
+                f"  storageSize: "
+                f"{cluster.pvcs[f'data-redis-{cluster.instance}-0'].capacity}\n"
                 f"status:\n  phase: "
                 f"{'Running' if all(p.ready for p in cluster.pods.values()) else 'Pending'}\n"
                 f"  readyReplicas: {sum(1 for p in cluster.pods.values() if p.ready)}\n"
@@ -272,6 +273,12 @@ class RealK8sBackend:
         for event in events:
             if involved and involved not in (event.involved_object.name or ""):
                 continue
+            last = event.last_timestamp or event.event_time or event.metadata.creation_timestamp
+            age_seconds = -1
+            if last is not None:
+                from datetime import datetime
+
+                age_seconds = int((datetime.now(UTC) - last).total_seconds())
             rows.append(
                 {
                     "type": event.type,
@@ -279,7 +286,8 @@ class RealK8sBackend:
                     "object": f"{event.involved_object.kind}/{event.involved_object.name}",
                     "message": event.message,
                     "count": event.count or 1,
-                    "age": str(event.last_timestamp),
+                    "age": f"{age_seconds}s" if age_seconds >= 0 else "unknown",
+                    "ageSeconds": age_seconds,
                 }
             )
         return rows
@@ -439,11 +447,42 @@ def signals_from_resource(kind: str, name: str, text: str) -> set[str]:
     return found
 
 
+#: Kubernetes keeps events for about an hour, so a fault that has already been
+#: recovered still appears in the event list. Evidence has to be recent: an old
+#: event may be reported, but it cannot justify a conclusion. Verified on a real
+#: cluster — a recovered ImagePullBackOff from 20 minutes earlier made every
+#: later diagnosis look like an image_pull fault.
+EVENT_FRESHNESS_SECONDS = 900
+
+_FAULT_EVENT_REASONS = {
+    "oomkilling",
+    "oomkilled",
+    "failed",
+    "failedscheduling",
+    "unhealthy",
+    "backoff",
+    "provisioningfailed",
+    "killing",
+}
+
+
+def _event_is_fresh(event: dict) -> bool:
+    age = event.get("ageSeconds")
+    if not isinstance(age, int) or age < 0:
+        return True  # unknown age: never silently drop evidence
+    return age <= EVENT_FRESHNESS_SECONDS
+
+
 def signals_from_events(events: list[dict]) -> set[str]:
     found: set[str] = set()
+    stale: set[str] = set()
     for event in events:
         reason = (event.get("reason") or "").lower()
         message = event.get("message") or ""
+        if not _event_is_fresh(event):
+            if reason in _FAULT_EVENT_REASONS:
+                stale.add("stale_event_evidence")
+            continue
         if reason in {"oomkilling", "oomkilled"} or "OOMKilled" in message:
             found.add("pod_oom_killed")
         if "Insufficient memory" in message or "Insufficient cpu" in message:
@@ -468,7 +507,7 @@ def signals_from_events(events: list[dict]) -> set[str]:
             found.add("pod_recreated_recently")
         if "back-off restarting failed container" in message.lower():
             found.add("pod_crashloop")
-    return found
+    return found | stale
 
 
 def _missing_signals(kind: str, name: str) -> set[str]:
@@ -686,7 +725,7 @@ def build_k8s_tools(backend: K8sBackend, namespace: str) -> list[ToolSpec]:
             name="k8s_events",
             tier="read",
             description="Namespace events, optionally filtered by involved object name.",
-            params={"involved_object": "filter, e.g. demo-0 (optional)"},
+            params={"involved_object": "filter, e.g. redis-demo-0 (optional)"},
             fn=k8s_events,
             max_result_chars=5000,
         ),

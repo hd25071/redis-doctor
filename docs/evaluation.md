@@ -1,75 +1,79 @@
-# 评测方法
+# 评测
 
-## 1. 实验设计
+## 设计
 
-16 个故障场景 × 4 个对照组 × 3 次重复 = 192 次运行；另有 1 组"预算收紧"稳健性实验
-（D 组 + `max_tool_calls=3`）。
-
-| 组 | 配置 | 想回答的问题 |
-|---|---|---|
-| A | 只给告警文本 | 纯语言先验能做到多少 |
-| B | 单次 ReAct（一批只读工具） | 工具带来多少增益 |
-| C | B + 手册检索（RAG） | 手册带来多少增益，在 held-out 上是否也有效 |
-| D | 完整版：假设验证循环 + 手册 | 迭代补证据能补上多少 |
-
-每个场景在 YAML 里声明：注入方式、恢复方式、告警文本、标准根因类别、**必须观察到的
-证据信号**、可接受的处置动作。
-
-## 2. 指标定义
-
-| 指标 | 定义 | 怎么算出来的 |
-|---|---|---|
-| 根因 Top-1 | `report.root_cause == scenario.category` | 类别匹配，不做字符串匹配 |
-| 根因 Top-3 | 标准类别出现在"结论 + 按置信度排序的假设"前 3 | 同上 |
-| 证据召回（已观察） | 标准信号被工具观察到的比例 | `required_signals ∩ observed_signals` |
-| 证据召回（已引用） | 标准信号被结论引用的比例 | `required_signals ∩ cited_signals` |
-| 幻觉率 | 结论里无法对应到真实工具调用的证据占比 | 引用不存在的 `call_id`，或该调用未产生所引信号 |
-| 平均步数 / 工具调用 / 耗时 / token | 每次诊断的均值 | 图与注册表的预算记账 |
-| 越权次数 | 白名单外调用 + 未审批写操作 + 工具级策略拒绝 | 审计计数，验收要求为 0 |
-| 恢复后是否干净 | 每次运行结束后沙箱是否回到无故障状态 | 避免上次故障污染下一次 |
-
-**幻觉率是一个代理指标**：它只能发现"引用对不上"的断言，不能发现"引用对得上但推理错误"
-的断言。计划里的人工抽样 + LLM 判官是它的补充，本仓库没有把那一层伪装成自动化结果。
-
-## 3. 怎么复现
+16 个场景 × 4 个组 × 3 次重复 = 192 次运行，外加一组预算收紧实验。选项与场景范围：
 
 ```bash
-# 沙箱后端（默认，不需要集群、不需要 API key）
-python rdctl.py eval --runs 3
-python rdctl.py report                # 从 latest.json 重新渲染 RESULTS.md
-
-# 预算收紧的稳健性实验
-python rdctl.py eval --runs 1 --variants D --budget-pressure --out eval/results/budget-pressure.json
-
-# 真实模型（OpenAI 兼容：DeepSeek / Qwen / vLLM / OpenAI）
-export RD_LLM_PROVIDER=openai_compat RD_LLM_BASE_URL=... RD_LLM_API_KEY=... RD_LLM_MODEL=...
-python rdctl.py eval --runs 3 --out eval/results/llm-deepseek.json
-
-# 真实集群
-export RD_BACKEND=real RD_KUBECONFIG=... RD_PROM_URL=...
+python rdctl.py eval --runs 3                                  # A/B/C/D 全量
+python rdctl.py eval --runs 1 --variants D --budget-pressure    # max_tool_calls=3
+python rdctl.py eval --runs 1 --scenarios S02,S08 --variants B,D
 python rdctl.py eval --runs 3 --backend real --policy openai_compat
 ```
 
-每次运行都会记录：策略名、模型名、prompt 版本、后端、预算、场景清单、耗时。
-结果 JSON 提交进 `eval/results/`，所以任何一张表的数字都能回溯到某次具体运行。
+每次运行前重置到干净状态，注入、采集、判分、恢复，并断言恢复后干净，避免上一次故障影响下一次。
+结果记录策略名、模型名、prompt 版本、后端、预算、场景清单与耗时，写入 `eval/results/`。
 
-## 4. 结果（本仓库提交的这次运行）
+## 指标
 
-见 README 的"效果摘要"与 `eval/results/RESULTS.md`。要点：
+| 指标 | 定义 |
+|---|---|
+| 根因 Top-1 / Top-3 | 结论类别等于 / 命中标准类别（结论 + 按置信度排序的假设前 3），类别匹配而非字符串匹配 |
+| 证据召回（已观察） | 标准信号被工具观察到的比例 |
+| 证据召回（已引用） | 标准信号被结论引用的比例 |
+| 幻觉率 | 结论中无法对应到真实工具调用与信号的证据占比 |
+| 平均步数 / 工具调用 / 耗时 / token | 每次诊断的均值 |
+| 越权次数 | 白名单外调用 + 未审批写操作 + 工具级策略拒绝，要求为 0 |
+| 恢复后干净 | 沙箱是否回到无故障状态 |
 
-- A 43.8% / B 81.2% / C 93.8% / D 100%（Top-1）
-- 越权操作次数：0
-- 泛化：C 在手册覆盖类别上 100%，held-out 上 75%；D 两组均 100%
-- 预算收紧到 3 次工具调用时，D 掉到 81.2%、证据召回 43.8%——说明分数来自证据采集
+幻觉率是代理指标：只能发现引用对不上的断言，发现不了引用对得上但推理错误的断言。
 
-## 5. 这个方法本身的局限
+## 结果
 
-1. **沙箱信号干净**：注入产生的信号是确定的、不抖动的，所以准确率高于真实集群。
-   真实集群会有噪声、指标缺失、日志被截断。
-2. **参考策略不是模型**：提交的数字来自确定性参考策略（`RD_LLM_PROVIDER=reference`），
-   它的作用是给出可复现的回归基线，并让 A/B/C/D 的差异只反映管线而不是模型抖动。
-   真实模型的数字需要用上面的命令自己跑，README 不替代它。
-3. **场景数量有限**：16 类故障覆盖常见故障，但没有覆盖级联故障、多故障同时发生、
-   慢故障（几小时演进）等形态。
-4. **单次重复次数少**：3 次重复足以暴露不稳定，但不足以给出置信区间。
+沙箱后端、确定性参考策略（`RD_LLM_PROVIDER=reference`）：
+
+| 组 | Top-1 | Top-3 | 证据召回(已观察) | 证据召回(已引用) | 幻觉率 | 平均步数 | 平均工具调用 | 越权 |
+|---|---|---|---|---|---|---|---|---|
+| A | 43.8% | 87.5% | 0.0% | 0.0% | 0.0% | 3.0 | 0.0 | 0 |
+| B | 81.2% | 100.0% | 81.2% | 75.0% | 0.0% | 5.0 | 6.6 | 0 |
+| C | 93.8% | 93.8% | 87.5% | 78.1% | 0.0% | 5.0 | 7.6 | 0 |
+| D | 100.0% | 100.0% | 100.0% | 90.6% | 0.0% | 7.4 | 10.4 | 0 |
+
+手册覆盖类别与 held-out 类别（S04/S11/S13/S15）分别统计：
+
+| 组 | 手册覆盖 | held-out |
+|---|---|---|
+| A | 41.7% | 50.0% |
+| B | 83.3% | 75.0% |
+| C | 100.0% | 75.0% |
+| D | 100.0% | 100.0% |
+
+预算收紧（`max_tool_calls=3`）：
+
+| 配置 | Top-1 | Top-3 | 证据召回(已观察) | 平均工具调用 |
+|---|---|---|---|---|
+| D | 100.0% | 100.0% | 100.0% | 10.4 |
+| D，预算 3 | 81.2% | 87.5% | 43.8% | 3.0 |
+
+原始数据：[`eval/results/reference-3x.json`](../eval/results/reference-3x.json)、
+[`eval/results/budget-pressure.json`](../eval/results/budget-pressure.json)、
+[`eval/results/RESULTS.md`](../eval/results/RESULTS.md)。
+
+## 复现真实模型的结果
+
+```bash
+export RD_LLM_PROVIDER=openai_compat
+export RD_LLM_BASE_URL=https://api.deepseek.com/v1
+export RD_LLM_API_KEY=... RD_LLM_MODEL=deepseek-chat RD_LLM_TEMPERATURE=0
+python rdctl.py eval --runs 3 --out eval/results/llm-deepseek.json
+```
+
+CI 使用 `reference` 或录制回放（`eval/cassettes/`），不调用真实模型。
+
+## 方法限制
+
+1. 沙箱信号确定、不抖动，真实集群存在噪声、指标缺失与日志截断，沙箱准确率偏乐观。
+2. 提交的数字来自参考策略而非大模型，真实模型需自行运行。
+3. 16 类单点故障，不含级联故障、多故障并发、慢演进故障。
+4. 3 次重复足以暴露不稳定，但不足以给出置信区间。
 

@@ -11,13 +11,13 @@ def test_unknown_tool_is_refused_and_counted(registry) -> None:
 
 
 def test_write_tool_requires_approval(registry) -> None:
-    result = registry.call("k8s_delete_pod", pod="demo-0")
+    result = registry.call("k8s_delete_pod", pod="redis-demo-0")
     assert result.blocked is True
     assert "approval" in (result.block_reason or "")
     assert registry.audit.blocked_unapproved_write == 1
     assert registry.audit.unauthorized_attempts == 1
     # ... and it works once approved by the gate.
-    approved = registry.call("k8s_delete_pod", __approved__=True, pod="demo-0")
+    approved = registry.call("k8s_delete_pod", __approved__=True, pod="redis-demo-0")
     assert approved.ok is True
     assert registry.audit.blocked_unapproved_write == 1
 
@@ -29,7 +29,7 @@ def test_secret_kind_is_not_readable(registry) -> None:
 
 
 def test_redis_command_denylist_applies_inside_the_tool(registry) -> None:
-    result = registry.call("redis_query", pod="demo-0", command="FLUSHALL")
+    result = registry.call("redis_query", pod="redis-demo-0", command="FLUSHALL")
     assert result.blocked is True
     assert "denylist" in (result.block_reason or "")
     assert registry.audit.unauthorized_attempts == 1
@@ -46,14 +46,14 @@ def test_budget_is_enforced(ctx) -> None:
     registry.budget.max_tool_calls = 2
     registry.call("k8s_get_pods")
     registry.call("k8s_events")
-    third = registry.call("redis_info", pod="demo-0", section="server")
+    third = registry.call("redis_info", pod="redis-demo-0", section="server")
     assert third.blocked is True
     assert registry.audit.blocked_budget == 1
 
 
 def test_info_sections_are_validated(registry) -> None:
-    assert registry.call("redis_info", pod="demo-0", section="all").ok is True
-    bad = registry.call("redis_info", pod="demo-0", section="commandstats")
+    assert registry.call("redis_info", pod="redis-demo-0", section="all").ok is True
+    bad = registry.call("redis_info", pod="redis-demo-0", section="commandstats")
     assert bad.blocked is True
 
 
@@ -75,7 +75,7 @@ def signals_from_pods_helper(_: str) -> set[str]:
     return signals_from_pods(
         [
             {
-                "name": "demo-0",
+                "name": "redis-demo-0",
                 "phase": "Running",
                 "ready": True,
                 "restartCount": 3,
@@ -102,8 +102,8 @@ def test_event_signal_extraction() -> None:
 
 def test_output_is_redacted_before_it_reaches_the_model(ctx) -> None:
     ctx.cluster.secrets["demo-secret"] = {"password": "s3cr3t-rd-demo"}
-    ctx.cluster.redis["demo-0"].requirepass = "s3cr3t-rd-demo"
-    ctx.cluster.redis["demo-0"].extra_logs = ["AUTH with password s3cr3t-rd-demo failed"]
+    ctx.cluster.redis["redis-demo-0"].requirepass = "s3cr3t-rd-demo"
+    ctx.cluster.redis["redis-demo-0"].extra_logs = ["AUTH with password s3cr3t-rd-demo failed"]
     registry = ctx.build_registry(include_kb=False)
-    result = registry.call("k8s_logs", pod="demo-0", tail=50)
+    result = registry.call("k8s_logs", pod="redis-demo-0", tail=50)
     assert "s3cr3t-rd-demo" not in result.raw

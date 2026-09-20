@@ -31,13 +31,13 @@ def _pod(cluster: SimCluster, pod: str):
 # ---------------------------------------------------------------------------
 # S01 pod deleted
 # ---------------------------------------------------------------------------
-def delete_master_pod(cluster: SimCluster, pod: str = "demo-0") -> None:
+def delete_master_pod(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     from tools.k8s import SandboxK8sBackend
 
     SandboxK8sBackend(cluster).delete_pod(pod, cluster.namespace)
 
 
-def restore_pod_age(cluster: SimCluster, pod: str = "demo-0") -> None:
+def restore_pod_age(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     state = _pod(cluster, pod)
     state.recreated = False
     state.created_seconds_ago = 5400
@@ -49,7 +49,7 @@ def restore_pod_age(cluster: SimCluster, pod: str = "demo-0") -> None:
 # S02 OOMKilled
 # ---------------------------------------------------------------------------
 def oom_kill(
-    cluster: SimCluster, pod: str = "demo-0", restarts: int = 3, limit: str = "256Mi"
+    cluster: SimCluster, pod: str = "redis-demo-0", restarts: int = 3, limit: str = "256Mi"
 ) -> None:
     state = _pod(cluster, pod)
     state.restarts = restarts
@@ -85,7 +85,7 @@ def oom_kill(
     )
 
 
-def restore_memory(cluster: SimCluster, pod: str = "demo-0") -> None:
+def restore_memory(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     state = _pod(cluster, pod)
     state.restarts = 0
     state.last_termination_reason = None
@@ -103,7 +103,7 @@ def restore_memory(cluster: SimCluster, pod: str = "demo-0") -> None:
 # ---------------------------------------------------------------------------
 def set_maxmemory(
     cluster: SimCluster,
-    pod: str = "demo-0",
+    pod: str = "redis-demo-0",
     maxmemory: str = str(64 * MIB),
     policy: str = "noeviction",
 ) -> None:
@@ -132,7 +132,7 @@ def set_maxmemory(
     )
 
 
-def restore_maxmemory(cluster: SimCluster, pod: str = "demo-0") -> None:
+def restore_maxmemory(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     info = _redis(cluster, pod)
     info.maxmemory = 512 * MIB
     info.used_memory = 180 * MIB
@@ -148,7 +148,7 @@ def restore_maxmemory(cluster: SimCluster, pod: str = "demo-0") -> None:
 # S04 network partition
 # ---------------------------------------------------------------------------
 def block_replica_link(cluster: SimCluster, pods: list[str] | None = None) -> None:
-    pods = pods or ["demo-1"]
+    pods = pods or ["redis-demo-1"]
     for pod in pods:
         info = _redis(cluster, pod)
         info.master_link_status = "down"
@@ -172,7 +172,7 @@ def block_replica_link(cluster: SimCluster, pods: list[str] | None = None) -> No
 
 
 def unblock_replica_link(cluster: SimCluster, pods: list[str] | None = None) -> None:
-    pods = pods or ["demo-1"]
+    pods = pods or ["redis-demo-1"]
     for pod in pods:
         info = _redis(cluster, pod)
         info.master_link_status = "up"
@@ -188,8 +188,8 @@ def unblock_replica_link(cluster: SimCluster, pods: list[str] | None = None) -> 
 # ---------------------------------------------------------------------------
 def pvc_pending(
     cluster: SimCluster,
-    pvc: str = "data-demo-1",
-    pod: str = "demo-1",
+    pvc: str = "data-redis-demo-1",
+    pod: str = "redis-demo-1",
     storage_class: str = "fast-ssd",
 ) -> None:
     state = cluster.pvcs[pvc]
@@ -223,7 +223,9 @@ def pvc_pending(
     cluster.statefulset["ready_replicas"] = 2
 
 
-def pvc_bound(cluster: SimCluster, pvc: str = "data-demo-1", pod: str = "demo-1") -> None:
+def pvc_bound(
+    cluster: SimCluster, pvc: str = "data-redis-demo-1", pod: str = "redis-demo-1"
+) -> None:
     state = cluster.pvcs[pvc]
     state.phase = "Bound"
     state.storage_class = "local-path"
@@ -241,7 +243,7 @@ def pvc_bound(cluster: SimCluster, pvc: str = "data-demo-1", pod: str = "demo-1"
 # ---------------------------------------------------------------------------
 # S06 image pull failure
 # ---------------------------------------------------------------------------
-def bad_image(cluster: SimCluster, pod: str = "demo-0", tag: str = "7.2.9-typo") -> None:
+def bad_image(cluster: SimCluster, pod: str = "redis-demo-0", tag: str = "7.2.9-typo") -> None:
     state = _pod(cluster, pod)
     state.image = f"redis:{tag}"
     state.phase = "Pending"
@@ -262,7 +264,7 @@ def bad_image(cluster: SimCluster, pod: str = "demo-0", tag: str = "7.2.9-typo")
     cluster.statefulset["ready_replicas"] = 2
 
 
-def good_image(cluster: SimCluster, pod: str = "demo-0", tag: str = "7.2") -> None:
+def good_image(cluster: SimCluster, pod: str = "redis-demo-0", tag: str = "7.2") -> None:
     state = _pod(cluster, pod)
     state.image = f"redis:{tag}"
     state.phase = "Running"
@@ -280,7 +282,7 @@ def good_image(cluster: SimCluster, pod: str = "demo-0", tag: str = "7.2") -> No
 def break_auth(
     cluster: SimCluster, pods: list[str] | None = None, secret: str = "redis-password"
 ) -> None:
-    pods = pods or ["demo-1"]
+    pods = pods or ["redis-demo-1"]
     cluster.secrets.pop(secret, None)
     for pod in pods:
         info = _redis(cluster, pod)
@@ -307,7 +309,7 @@ def break_auth(
 def restore_auth(
     cluster: SimCluster, pods: list[str] | None = None, secret: str = "redis-password"
 ) -> None:
-    pods = pods or ["demo-1"]
+    pods = pods or ["redis-demo-1"]
     cluster.secrets[secret] = {"password": "s3cr3t-rd-demo"}
     for pod in pods:
         info = _redis(cluster, pod)
@@ -322,7 +324,7 @@ def restore_auth(
 # S08 headless service missing
 # ---------------------------------------------------------------------------
 def delete_headless_service(cluster: SimCluster, pods: list[str] | None = None) -> None:
-    pods = pods or ["demo-1", "demo-2"]
+    pods = pods or ["redis-demo-1", "redis-demo-2"]
     cluster.remove_service(f"{cluster.instance}-headless")
     for pod in pods:
         info = _redis(cluster, pod)
@@ -337,7 +339,7 @@ def delete_headless_service(cluster: SimCluster, pods: list[str] | None = None) 
 
 
 def restore_headless_service(cluster: SimCluster, pods: list[str] | None = None) -> None:
-    pods = pods or ["demo-1", "demo-2"]
+    pods = pods or ["redis-demo-1", "redis-demo-2"]
     cluster.services[f"{cluster.instance}-headless"] = {
         "name": f"{cluster.instance}-headless",
         "type": "ClusterIP",
@@ -355,7 +357,7 @@ def restore_headless_service(cluster: SimCluster, pods: list[str] | None = None)
 # ---------------------------------------------------------------------------
 # S09 slow query
 # ---------------------------------------------------------------------------
-def slow_query_load(cluster: SimCluster, pod: str = "demo-0") -> None:
+def slow_query_load(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     from sandbox.cluster import SlowlogEntry
 
     info = _redis(cluster, pod)
@@ -386,7 +388,7 @@ def slow_query_load(cluster: SimCluster, pod: str = "demo-0") -> None:
     ]
 
 
-def clear_slow_query(cluster: SimCluster, pod: str = "demo-0") -> None:
+def clear_slow_query(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     info = _redis(cluster, pod)
     info.latency_p99_ms = 0.42
     info.slowlog = []
@@ -399,7 +401,7 @@ def clear_slow_query(cluster: SimCluster, pod: str = "demo-0") -> None:
 # ---------------------------------------------------------------------------
 # S10 maxclients exhausted
 # ---------------------------------------------------------------------------
-def exhaust_clients(cluster: SimCluster, pod: str = "demo-0", clients: int = 10000) -> None:
+def exhaust_clients(cluster: SimCluster, pod: str = "redis-demo-0", clients: int = 10000) -> None:
     info = _redis(cluster, pod)
     info.maxclients = clients
     info.connected_clients = clients
@@ -422,7 +424,7 @@ def exhaust_clients(cluster: SimCluster, pod: str = "demo-0", clients: int = 100
     )
 
 
-def release_clients(cluster: SimCluster, pod: str = "demo-0") -> None:
+def release_clients(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     info = _redis(cluster, pod)
     info.connected_clients = 3
     info.blocked_clients = 0
@@ -435,7 +437,9 @@ def release_clients(cluster: SimCluster, pod: str = "demo-0") -> None:
 # ---------------------------------------------------------------------------
 # S11 disk full
 # ---------------------------------------------------------------------------
-def fill_disk(cluster: SimCluster, pvc: str = "data-demo-0", pod: str = "demo-0") -> None:
+def fill_disk(
+    cluster: SimCluster, pvc: str = "data-redis-demo-0", pod: str = "redis-demo-0"
+) -> None:
     state = cluster.pvcs[pvc]
     state.used_ratio = 1.0
     state.message = "filesystem is full"
@@ -466,7 +470,9 @@ def fill_disk(cluster: SimCluster, pvc: str = "data-demo-0", pod: str = "demo-0"
     )
 
 
-def clear_disk(cluster: SimCluster, pvc: str = "data-demo-0", pod: str = "demo-0") -> None:
+def clear_disk(
+    cluster: SimCluster, pvc: str = "data-redis-demo-0", pod: str = "redis-demo-0"
+) -> None:
     state = cluster.pvcs[pvc]
     state.used_ratio = 0.31
     state.message = ""
@@ -486,7 +492,7 @@ def clear_disk(cluster: SimCluster, pvc: str = "data-demo-0", pod: str = "demo-0
 # S12 unschedulable: requests too large
 # ---------------------------------------------------------------------------
 def oversize_requests(
-    cluster: SimCluster, pod: str = "demo-2", memory: str = "6Gi", cpu: str = "4"
+    cluster: SimCluster, pod: str = "redis-demo-2", memory: str = "6Gi", cpu: str = "4"
 ) -> None:
     state = _pod(cluster, pod)
     state.phase = "Pending"
@@ -507,7 +513,7 @@ def oversize_requests(
     cluster.statefulset["ready_replicas"] = 2
 
 
-def shrink_requests(cluster: SimCluster, pod: str = "demo-2") -> None:
+def shrink_requests(cluster: SimCluster, pod: str = "redis-demo-2") -> None:
     state = _pod(cluster, pod)
     state.phase = "Running"
     state.ready = True
@@ -521,7 +527,7 @@ def shrink_requests(cluster: SimCluster, pod: str = "demo-2") -> None:
 # S13 CPU throttling
 # ---------------------------------------------------------------------------
 def low_cpu_limit(
-    cluster: SimCluster, pod: str = "demo-0", limit: str = "100m", ratio: float = 0.78
+    cluster: SimCluster, pod: str = "redis-demo-0", limit: str = "100m", ratio: float = 0.78
 ) -> None:
     state = _pod(cluster, pod)
     state.cpu_limit = limit
@@ -539,7 +545,7 @@ def low_cpu_limit(
     )
 
 
-def restore_cpu_limit(cluster: SimCluster, pod: str = "demo-0") -> None:
+def restore_cpu_limit(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     state = _pod(cluster, pod)
     state.cpu_limit = "1"
     state.cpu_usage_cores = 0.04
@@ -552,7 +558,7 @@ def restore_cpu_limit(cluster: SimCluster, pod: str = "demo-0") -> None:
 # S14 replication backlog too small -> full resync storm
 # ---------------------------------------------------------------------------
 def shrink_repl_backlog(
-    cluster: SimCluster, pod: str = "demo-1", size_bytes: int = 16 * 1024
+    cluster: SimCluster, pod: str = "redis-demo-1", size_bytes: int = 16 * 1024
 ) -> None:
     master = cluster.master_pod().name
     master_info = _redis(cluster, master)
@@ -592,7 +598,7 @@ def shrink_repl_backlog(
 
 
 def restore_repl_backlog(
-    cluster: SimCluster, pod: str = "demo-1", size_bytes: int = 64 * MIB
+    cluster: SimCluster, pod: str = "redis-demo-1", size_bytes: int = 64 * MIB
 ) -> None:
     master = cluster.master_pod().name
     _redis(cluster, master).config["repl-backlog-size"] = str(size_bytes)
@@ -610,7 +616,7 @@ def restore_repl_backlog(
 # ---------------------------------------------------------------------------
 # S15 readiness probe misconfigured
 # ---------------------------------------------------------------------------
-def break_readiness_probe(cluster: SimCluster, pod: str = "demo-0", port: int = 6380) -> None:
+def break_readiness_probe(cluster: SimCluster, pod: str = "redis-demo-0", port: int = 6380) -> None:
     state = _pod(cluster, pod)
     state.readiness_port = port
     state.ready = False
@@ -627,7 +633,9 @@ def break_readiness_probe(cluster: SimCluster, pod: str = "demo-0", port: int = 
     )
 
 
-def fix_readiness_probe(cluster: SimCluster, pod: str = "demo-0", port: int = REDIS_PORT) -> None:
+def fix_readiness_probe(
+    cluster: SimCluster, pod: str = "redis-demo-0", port: int = REDIS_PORT
+) -> None:
     state = _pod(cluster, pod)
     state.readiness_port = port
     state.ready = True
@@ -641,7 +649,7 @@ def fix_readiness_probe(cluster: SimCluster, pod: str = "demo-0", port: int = RE
 # S16 invalid configuration -> CrashLoopBackOff
 # ---------------------------------------------------------------------------
 def invalid_config(
-    cluster: SimCluster, pod: str = "demo-0", directive: str = "appendonlyy yes"
+    cluster: SimCluster, pod: str = "redis-demo-0", directive: str = "appendonlyy yes"
 ) -> None:
     cluster.config_map_extra["appendonlyy"] = "yes"
     cluster.config_map_conf = cluster.render_redis_conf()
@@ -671,7 +679,7 @@ def invalid_config(
     del key
 
 
-def restore_config(cluster: SimCluster, pod: str = "demo-0") -> None:
+def restore_config(cluster: SimCluster, pod: str = "redis-demo-0") -> None:
     cluster.config_map_extra.pop("appendonlyy", None)
     cluster.config_map_conf = cluster.render_redis_conf()
     state = _pod(cluster, pod)

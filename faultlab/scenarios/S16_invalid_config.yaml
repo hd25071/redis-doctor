@@ -6,8 +6,8 @@ held_out: false
 summary: ConfigMap 写入拼错的指令，redis-server 启动即失败，Pod CrashLoopBackOff。
 alert: |
   [P1] KubePodCrashLooping
-  namespace=demo instance=demo pod=demo-0
-  summary: demo-0 反复 CrashLoopBackOff（restartCount=7），上一次容器日志出现 FATAL CONFIG FILE ERROR。
+  namespace=demo instance=demo pod=redis-demo-0
+  summary: redis-demo-0 反复 CrashLoopBackOff（restartCount=7），上一次容器日志出现 FATAL CONFIG FILE ERROR。
   labels: alertname=KubePodCrashLooping, severity=critical
 symptom_keywords: [restart]
 required_signals: [invalid_config_directive]
@@ -16,15 +16,16 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: invalid_config
-    params: {pod: demo-0, directive: "appendonlyy yes"}
+    params: {pod: redis-demo-0, directive: "appendonlyy yes"}
 recover_sim:
   - op: restore_config
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 inject_kubectl:
   - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"config":{"appendonlyy":"yes"}}}'
-  - kubectl delete pod demo-0 -n demo
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=60s
 recover_kubectl:
   - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"config":{"appendonlyy":null}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=240s
 kubectl_verified: false
+verification_note: 命令按 operator 的 spec.config 写；真机验证结果见 eval/results/real-cluster.json
 notes: 关键证据是 previous 容器日志里的 Bad directive，而不是重启次数。
-

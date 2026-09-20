@@ -6,7 +6,7 @@ held_out: true
 summary: CPU limit 调到 100m，容器被 cfs 限流，延迟抖动但没有慢查询。
 alert: |
   [P2] RedisLatencyJitter
-  namespace=demo instance=demo pod=demo-0
+  namespace=demo instance=demo pod=redis-demo-0
   summary: 命令延迟在 10 分钟内周期性抖动，restartCount 为 0，慢日志为空。
   labels: alertname=RedisLatencyJitter, severity=warning
 symptom_keywords: [latency]
@@ -16,14 +16,20 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: low_cpu_limit
-    params: {pod: demo-0, limit: 100m, ratio: 0.78}
+    params: {pod: redis-demo-0, limit: 100m, ratio: 0.78}
 recover_sim:
   - op: restore_cpu_limit
-    params: {pod: demo-0}
+    params: {pod: redis-demo-0}
 inject_kubectl:
-  - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"100m"}]'
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"resources":{"limits":{"cpu":"100m"}}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
 recover_kubectl:
-  - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"1"}]'
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"resources":{"limits":{"cpu":"1"}}}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
 kubectl_verified: false
+verification_note: 注入路径按 operator 的 spec.resources 写；但诊断依赖 cfs throttled 指标，需要先部署 Prometheus（本机精简集群没有 monitoring 栈）
 notes: held-out 场景：必须靠 cfs throttled 指标，而不是慢日志。
-

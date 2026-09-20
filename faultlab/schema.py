@@ -46,6 +46,7 @@ class Scenario(BaseModel):
     inject_kubectl: list[str] = Field(default_factory=list)
     recover_kubectl: list[str] = Field(default_factory=list)
     kubectl_verified: bool = False
+    verification_note: str = ""
     notes: str = ""
 
     @field_validator("category")

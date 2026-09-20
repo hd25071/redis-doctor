@@ -6,8 +6,8 @@ held_out: false
 summary: 把 spec.version 改成不存在的标签，Pod 进入 ImagePullBackOff。
 alert: |
   [P1] KubePodImagePullBackOff
-  namespace=demo instance=demo pod=demo-0
-  summary: demo-0 处于 ImagePullBackOff，无法拉取 redis:7.2.9-typo。
+  namespace=demo instance=demo pod=redis-demo-0
+  summary: redis-demo-0 处于 ImagePullBackOff，无法拉取 redis:7.2.9-typo。
   labels: alertname=KubePodImagePullBackOff, severity=critical
 symptom_keywords: [image, pending]
 required_signals: [image_pull_error]
@@ -16,14 +16,19 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: bad_image
-    params: {pod: demo-0, tag: 7.2.9-typo}
+    params: {pod: redis-demo-0, tag: 7.2.9-typo}
 recover_sim:
   - op: good_image
-    params: {pod: demo-0, tag: "7.2"}
+    params: {pod: redis-demo-0, tag: "7.2"}
 inject_kubectl:
   - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"version":"7.2.9-typo"}}'
 recover_kubectl:
   - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"version":"7.2"}}'
-kubectl_verified: false
+  - kubectl -n demo delete pod redis-demo-2 --ignore-not-found
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
+kubectl_verified: true
+verification_note: >-
+  2026-09-20 在 k3s v1.30.4 + redis-operator:dev 上验证通过（注入、诊断、证据均命中）。
+  注意：把 spec.version 改回去不会自动替换已经处于 ImagePullBackOff 的 Pod——StatefulSet
+  的有序滚动在等这个 Pod Ready，恢复必须额外删掉它（recover 里已包含这一步）。
 notes: ""
-

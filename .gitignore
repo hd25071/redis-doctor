@@ -20,3 +20,7 @@ data/
 # Generated artefacts that are cheap to rebuild
 eval/results/*.tmp.json
 
+# Cluster credentials exported while verifying (never commit a kubeconfig)
+k3s.yaml
+*.kubeconfig
+*-kubeconfig

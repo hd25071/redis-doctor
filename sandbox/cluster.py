@@ -2,7 +2,7 @@
 
 The model mirrors the real CRD (``ops.example.com/v1alpha1``):
 
-    StatefulSet demo (3 pods)   -> pods demo-0 (master), demo-1, demo-2 (replicas)
+StatefulSet redis-demo (3 pods) -> redis-demo-0 (master), redis-demo-1/2 (replicas)
     Service demo-headless       -> stable per-pod DNS: demo-<i>.demo-headless.demo...
     Service demo                -> client entry point
     ConfigMap demo-config       -> redis.conf used by every pod
@@ -22,11 +22,37 @@ from typing import Any
 NAMESPACE = "demo"
 INSTANCE = "demo"
 REDIS_PORT = 6379
-HEADLESS_SERVICE = f"{INSTANCE}-headless"
-CONFIG_MAP = f"{INSTANCE}-config"
 REDIS_IMAGE_REPO = "redis"
 REDIS_VERSION = "7.2.5"
 REPLICAS = 3
+
+
+# Object names produced by redis-operator, verified against a live k3s cluster:
+#   StatefulSet redis-<instance>   pods redis-<instance>-<i>
+#   Services    <instance> (client) and <instance>-headless (per-pod DNS)
+#   ConfigMap   <instance>-config  PVC data-redis-<instance>-<i>
+def statefulset_name(instance: str) -> str:
+    return f"redis-{instance}"
+
+
+def pod_name(instance: str, index: int) -> str:
+    return f"redis-{instance}-{index}"
+
+
+def pvc_name(instance: str, index: int) -> str:
+    return f"data-redis-{instance}-{index}"
+
+
+def headless_name(instance: str) -> str:
+    return f"{instance}-headless"
+
+
+def configmap_name(instance: str) -> str:
+    return f"{instance}-config"
+
+
+HEADLESS_SERVICE = headless_name(INSTANCE)
+CONFIG_MAP = configmap_name(INSTANCE)
 
 _BASE = datetime(2026, 9, 20, 9, 12, 3, 101000)
 
@@ -121,7 +147,7 @@ class RedisPodState:
     pod: str
     role: str = "replica"
     link_status: str = "ok"
-    master_host: str = f"{INSTANCE}-0.{HEADLESS_SERVICE}.{NAMESPACE}.svc.cluster.local"
+    master_host: str = f"{pod_name(INSTANCE, 0)}.{HEADLESS_SERVICE}.{NAMESPACE}.svc.cluster.local"
     master_link_status: str = "up"
     master_sync_in_progress: int = 0
     master_last_io_seconds_ago: int = 1
@@ -197,6 +223,7 @@ class Event:
             "message": self.message,
             "count": self.count,
             "age": f"{self.age_seconds // 60}m{self.age_seconds % 60}s",
+            "ageSeconds": self.age_seconds,
         }
 
 
@@ -240,7 +267,7 @@ class SimCluster:
         self.config_map_extra: dict[str, str] = {}
         self.secrets: dict[str, dict[str, str]] = {"redis-password": {"password": "s3cr3t-rd-demo"}}
         self.statefulset = {
-            "name": self.instance,
+            "name": statefulset_name(self.instance),
             "replicas": REPLICAS,
             "ready_replicas": REPLICAS,
             "service_name": HEADLESS_SERVICE,
@@ -250,7 +277,7 @@ class SimCluster:
         self.alerts: list[str] = []
         self.notes: list[str] = []
         for index in range(REPLICAS):
-            name = f"{self.instance}-{index}"
+            name = pod_name(self.instance, index)
             role = "master" if index == 0 else "replica"
             self.pods[name] = PodState(
                 name=name,
@@ -265,7 +292,9 @@ class SimCluster:
                 self.redis[name].link_status = "ok"
                 self.redis[name].master_link_status = "up"
                 self.redis[name].master_last_io_seconds_ago = 0
-            self.pvcs[f"data-{name}"] = PvcState(name=f"data-{name}")
+            self.pvcs[pvc_name(self.instance, index)] = PvcState(
+                name=pvc_name(self.instance, index)
+            )
             self.events.extend(
                 [
                     Event(
@@ -316,9 +345,10 @@ class SimCluster:
         self.events.append(
             Event(
                 kind="StatefulSet",
-                name=self.instance,
+                name=statefulset_name(self.instance),
                 reason="SuccessfulCreate",
-                message=f"create Pod {self.instance}-0 in StatefulSet {self.instance} successful",
+                message=f"create Pod {pod_name(self.instance, 0)} in "
+                f"StatefulSet {statefulset_name(self.instance)} successful",
                 age_seconds=5400,
             )
         )
@@ -334,7 +364,7 @@ class SimCluster:
         for pod in self.pods.values():
             if pod.role == "master" and not pod.deleted:
                 return pod
-        return self.pods[f"{self.instance}-0"]
+        return self.pods[pod_name(self.instance, 0)]
 
     def replicas(self) -> list[PodState]:
         return [p for p in self.pods.values() if p.role == "replica"]
@@ -453,7 +483,7 @@ class SimCluster:
             "                  app.kubernetes.io/name=redis",
             f"Status:           {pod.phase}",
             f"IP:               10.42.3.{10 + pod.index}",
-            "Controlled By:    StatefulSet/" + self.instance,
+            "Controlled By:    StatefulSet/" + statefulset_name(self.instance),
             "Containers:",
             "  redis:",
             f"    Container ID:   containerd://{pod.uid}",
@@ -519,13 +549,15 @@ class SimCluster:
             "   redis:",
             f"    Image:      redis:{sts.get('version', '7.2')}",
             f"    Port:       {REDIS_PORT}/TCP",
-            f"    Readiness:  tcp-socket :{self.pods[f'{self.instance}-0'].readiness_port} "
+            f"    Readiness:  tcp-socket :"
+            f"{self.pods[pod_name(self.instance, 0)].readiness_port} "
             "delay=3s timeout=1s period=5s",
-            f"    Liveness:   tcp-socket :{self.pods[f'{self.instance}-0'].liveness_port} "
+            f"    Liveness:   tcp-socket :"
+            f"{self.pods[pod_name(self.instance, 0)].liveness_port} "
             "delay=10s timeout=1s period=10s",
             "    Limits:",
-            f"      cpu:      {self.pods[f'{self.instance}-0'].cpu_limit}",
-            f"      memory:   {self.pods[f'{self.instance}-0'].memory_limit}",
+            f"      cpu:      {self.pods[pod_name(self.instance, 0)].cpu_limit}",
+            f"      memory:   {self.pods[pod_name(self.instance, 0)].memory_limit}",
             "    Mounts:",
             "      /etc/redis from config (rw)",
             "      /data from data (rw)",

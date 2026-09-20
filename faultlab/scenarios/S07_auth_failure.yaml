@@ -6,8 +6,8 @@ held_out: false
 summary: 删除密码 Secret 并滚动重启，副本 AUTH 失败，复制中断，诊断工具自身也拿到 NOAUTH。
 alert: |
   [P1] RedisAuthFailure
-  namespace=demo instance=demo pod=demo-1
-  summary: 副本 demo-1 报 NOAUTH Authentication required / WRONGPASS，主从复制中断，
+  namespace=demo instance=demo pod=redis-demo-1
+  summary: 副本 redis-demo-1 报 NOAUTH Authentication required / WRONGPASS，主从复制中断，
   同时 Secret redis-password 丢失。
   labels: alertname=RedisAuthFailure, severity=critical
 symptom_keywords: [auth, replication]
@@ -18,15 +18,25 @@ acceptable_actions:
 wait_seconds: 5
 inject_sim:
   - op: break_auth
-    params: {pods: [demo-1], secret: redis-password}
+    params: {pods: [redis-demo-1], secret: redis-password}
 recover_sim:
   - op: restore_auth
-    params: {pods: [demo-1], secret: redis-password}
+    params: {pods: [redis-demo-1], secret: redis-password}
 inject_kubectl:
-  - kubectl delete secret redis-password -n demo
-  - kubectl delete pod demo-1 -n demo
+  - >-
+    kubectl create secret generic redis-password-rotated -n demo
+    --from-literal=password=$(openssl rand -hex 12) --dry-run=client -o yaml
+    | kubectl apply -f -
+  - >-
+    kubectl patch redis demo -n demo --type=merge
+    -p '{"spec":{"passwordSecret":"redis-password-rotated"}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
 recover_kubectl:
-  - kubectl create secret generic redis-password -n demo --from-literal=password=s3cr3t-rd-demo
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"passwordSecret":"redis-password"}}'
+  - kubectl rollout status statefulset/redis-demo -n demo --timeout=180s
+  - kubectl delete job redis-doctor-acl-init -n demo --ignore-not-found
+  - kubectl apply -f deploy/redis/acl-init-job.yaml
+  - kubectl wait --for=condition=complete job/redis-doctor-acl-init -n demo --timeout=180s
 kubectl_verified: false
+verification_note: 未验证：该 operator 没有 aclfile 支持，ACL 用户只存在内存中；轮换密码重启后 doctor 用户消失，恢复必须重跑 ACL Job（recover 已包含）
 notes: 复制中断只是因为认证失败，不能判成网络分区——两条日志同时出现时以认证错误为准。
-

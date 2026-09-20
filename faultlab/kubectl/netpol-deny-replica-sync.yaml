@@ -1,0 +1,24 @@
+# S04 injection: block replication traffic to one replica.
+#
+# k3s enforces NetworkPolicy with its bundled controller, so no CNI plugin is
+# needed. The policy selects a single pod so the rest of the cluster keeps
+# working and the fault has a clean blast radius.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-doctor-deny-replica-sync
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels:
+      statefulset.kubernetes.io/pod-name: redis-demo-1
+  policyTypes: [Ingress]
+  ingress:
+    # Only the master may talk to this replica; the master is redis-demo-0.
+    - from:
+        - podSelector:
+            matchLabels:
+              statefulset.kubernetes.io/pod-name: redis-demo-0
+      ports:
+        - { protocol: TCP, port: 6379 }
+

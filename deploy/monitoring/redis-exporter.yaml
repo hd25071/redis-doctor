@@ -21,9 +21,9 @@ spec:
         - name: exporter
           image: oliver006/redis_exporter:v1.62.0
           args:
-            - --redis.addr=redis://demo-0.demo-headless.demo.svc.cluster.local:6379
-            - --redis.addr=redis://demo-1.demo-headless.demo.svc.cluster.local:6379
-            - --redis.addr=redis://demo-2.demo-headless.demo.svc.cluster.local:6379
+            - --redis.addr=redis://redis-demo-0.demo-headless.demo.svc.cluster.local:6379
+            - --redis.addr=redis://redis-demo-1.demo-headless.demo.svc.cluster.local:6379
+            - --redis.addr=redis://redis-demo-2.demo-headless.demo.svc.cluster.local:6379
             - --check-keys=""
           ports:
             - { name: metrics, containerPort: 9121 }

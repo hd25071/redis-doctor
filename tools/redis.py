@@ -36,6 +36,29 @@ class RedisAuthError(RuntimeError):
     pass
 
 
+#: redis-py raises AuthenticationError / ResponseError("NOAUTH ...") rather than
+#: our RedisAuthError. Both mean the same thing to the diagnosis: authentication
+#: is broken, and that is evidence in its own right.
+_AUTH_MARKERS = ("noauth", "wrongpass", "invalid username-password", "authentication")
+
+
+def is_auth_error(exc: BaseException) -> bool:
+    blob = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in blob for marker in _AUTH_MARKERS)
+
+
+def auth_failure_result(tool: str, args: dict, exc: BaseException) -> ToolResult:
+    return ToolResult(
+        tool=tool,
+        args=args,
+        ok=False,
+        error=str(exc),
+        summary=f"redis authentication failed: {exc}",
+        raw=f"(error) {exc}",
+        signals={"auth_failure"},
+    )
+
+
 class RedisBackend(Protocol):
     def info(self, pod: str, section: str | None) -> str: ...
 
@@ -105,20 +128,35 @@ class RealRedisBackend:
         username: str = "doctor",
         password: str = "",
         port: int = REDIS_PORT,
+        port_forward_base: int = 0,
     ) -> None:
         self.namespace = namespace
         self.instance = instance
         self.username = username
         self.password = password
         self.port = port
+        # Running the agent outside the cluster (form A) means cluster DNS is
+        # not resolvable and pod IPs are not routable. In that mode the pods are
+        # reached through kubectl port-forwards on 127.0.0.1:
+        #   redis-demo-<i>  ->  127.0.0.1:(base + i)
+        self.port_forward_base = port_forward_base
+
+    def target(self, pod: str) -> tuple[str, int]:
+        if self.port_forward_base:
+            index = int(pod.rsplit("-", 1)[-1])
+            return "127.0.0.1", self.port_forward_base + index
+        return (
+            f"{pod}.{self.instance}-headless.{self.namespace}.svc.cluster.local",
+            self.port,
+        )
 
     def _client(self, pod: str):  # pragma: no cover - requires a real cluster
         import redis
 
-        host = f"{pod}.{self.instance}-headless.{self.namespace}.svc.cluster.local"
+        host, port = self.target(pod)
         return redis.Redis(
             host=host,
-            port=self.port,
+            port=port,
             username=self.username or None,
             password=self.password or None,
             socket_timeout=5,
@@ -209,7 +247,9 @@ def signals_from_info(info: dict[str, str]) -> set[str]:
 
 
 def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> list[ToolSpec]:
-    allowed_pods = re.compile(rf"^{re.escape(instance)}-\d+$")
+    # redis-operator names pods redis-<instance>-<i>; the unprefixed form is
+    # accepted as well so the tool layer is not tied to one naming convention.
+    allowed_pods = re.compile(rf"^(?:redis-)?{re.escape(instance)}-\d+$")
 
     def _guard(pod: str) -> ToolResult | None:
         if not allowed_pods.match(pod):
@@ -218,7 +258,9 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
                 args={"pod": pod},
                 ok=False,
                 blocked=True,
-                block_reason=f"pod must belong to instance {instance} (expected {instance}-N)",
+                block_reason=(
+                    f"pod must belong to instance {instance} (expected redis-{instance}-N)"
+                ),
                 error="target outside the diagnosed workload",
             )
         return None
@@ -241,16 +283,10 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
             )
         try:
             text = backend.info(pod, section.lower() or None)
-        except RedisAuthError as exc:
-            return ToolResult(
-                tool="redis_info",
-                args={"pod": pod, "section": section},
-                ok=False,
-                error=str(exc),
-                summary=f"INFO {section} on {pod} failed: {exc}",
-                raw=f"(error) ERR {exc}",
-                signals={"auth_failure"},
-            )
+        except Exception as exc:
+            if is_auth_error(exc):
+                return auth_failure_result("redis_info", {"pod": pod, "section": section}, exc)
+            raise
         parsed = parse_info(text)
         signals = signals_from_info(parsed)
         keep = {
@@ -303,16 +339,10 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
         count = max(1, min(int(count), 64))
         try:
             entries = backend.slowlog(pod, count)
-        except RedisAuthError as exc:
-            return ToolResult(
-                tool="redis_slowlog",
-                args={"pod": pod, "count": count},
-                ok=False,
-                error=str(exc),
-                summary=f"SLOWLOG GET on {pod} failed: {exc}",
-                raw=f"(error) ERR {exc}",
-                signals={"auth_failure"},
-            )
+        except Exception as exc:
+            if is_auth_error(exc):
+                return auth_failure_result("redis_slowlog", {"pod": pod, "count": count}, exc)
+            raise
         signals: set[str] = set()
         if any(entry["duration_us"] >= 10000 for entry in entries):
             signals.add("slow_query_detected")
@@ -346,16 +376,10 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
             )
         try:
             values = backend.config_get(pod, param)
-        except RedisAuthError as exc:
-            return ToolResult(
-                tool="redis_config_get",
-                args={"pod": pod, "param": param},
-                ok=False,
-                error=str(exc),
-                summary=f"CONFIG GET {param} on {pod} failed: {exc}",
-                raw=f"(error) ERR {exc}",
-                signals={"auth_failure"},
-            )
+        except Exception as exc:
+            if is_auth_error(exc):
+                return auth_failure_result("redis_config_get", {"pod": pod, "param": param}, exc)
+            raise
         body = "\n".join(f"{k} = {v}" for k, v in values.items())
         signals: set[str] = set()
         backlog = values.get("repl-backlog-size")
@@ -436,15 +460,10 @@ def build_redis_tools(backend: RedisBackend, namespace: str, instance: str) -> l
                     raw=text,
                     signals=signals_from_info(parse_info(text)),
                 )
-        except RedisAuthError as exc:
-            return ToolResult(
-                tool="redis_query",
-                args={"pod": pod, "command": command},
-                ok=False,
-                error=str(exc),
-                raw=f"(error) ERR {exc}",
-                signals={"auth_failure"},
-            )
+        except Exception as exc:
+            if is_auth_error(exc):
+                return auth_failure_result("redis_query", {"pod": pod, "command": command}, exc)
+            raise
         return ToolResult(
             tool="redis_query",
             args={"pod": pod, "command": command},
