@@ -194,12 +194,14 @@ def _loads(text: str) -> dict[str, Any] | None:
 def build_llm(provider: str, **kwargs: Any) -> LLM | None:
     """Return an LLM client, or ``None`` for the deterministic reference policy."""
     provider = (provider or "reference").strip().lower()
+    # Popped once, for every provider: passing it straight through to the
+    # OpenAI-compatible client raised TypeError and broke real-model runs.
+    cassette_path = kwargs.pop("cassette_path", "eval/cassettes/run.jsonl")
     if provider in {"reference", "none", "deterministic"}:
         return None
     if provider == "openai_compat":
         return OpenAICompatLLM(**kwargs)
     if provider == "cassette":
-        cassette_path = kwargs.pop("cassette_path", "eval/cassettes/run.jsonl")
         inner = None
         if kwargs.get("api_key"):
             inner = OpenAICompatLLM(**kwargs)

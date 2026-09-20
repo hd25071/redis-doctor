@@ -16,6 +16,9 @@ def client(tmp_path, monkeypatch):
     settings.data_dir = str(tmp_path / "data")
     settings.webhook_token = "test-token"
     settings.backend = "sandbox"
+    # Keep the API tests independent of a developer's local .env: they must not
+    # start calling a real model endpoint.
+    settings.llm_provider = "reference"
     return TestClient(create_app(settings))
 
 

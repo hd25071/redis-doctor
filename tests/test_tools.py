@@ -107,3 +107,29 @@ def test_output_is_redacted_before_it_reaches_the_model(ctx) -> None:
     registry = ctx.build_registry(include_kb=False)
     result = registry.call("k8s_logs", pod="redis-demo-0", tail=50)
     assert "s3cr3t-rd-demo" not in result.raw
+
+
+def test_llm_factory_accepts_the_cassette_argument_for_every_provider() -> None:
+    """Regression: build_llm must not forward cassette-only kwargs to clients."""
+    from agent.llm import CassetteLLM, OpenAICompatLLM, build_llm
+
+    assert build_llm("reference", cassette_path="x.jsonl") is None
+    client = build_llm(
+        "openai_compat",
+        base_url="https://api.deepseek.com/v1",
+        api_key="test-key",
+        model="deepseek-chat",
+        temperature=0,
+        max_output_tokens=100,
+        cassette_path="x.jsonl",
+    )
+    assert isinstance(client, OpenAICompatLLM)
+    assert client.name == "openai_compat:deepseek-chat"
+    recorded = build_llm(
+        "cassette",
+        base_url="https://api.deepseek.com/v1",
+        api_key="test-key",
+        model="deepseek-chat",
+        cassette_path="x.jsonl",
+    )
+    assert isinstance(recorded, CassetteLLM)
