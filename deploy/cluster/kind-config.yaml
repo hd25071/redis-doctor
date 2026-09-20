@@ -1,0 +1,12 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: redis-doctor
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # The agent's UI is reached through 127.0.0.1 on a high port so it can
+      # never collide with an existing host service.
+      - containerPort: 30099
+        hostPort: 127.0.0.1:30099
+        protocol: TCP
+

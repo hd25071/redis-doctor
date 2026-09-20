@@ -1,0 +1,33 @@
+# One redis_exporter as a sidecar of the diagnosed StatefulSet is the option the
+# operator can support natively (spec.metrics.enabled). Until that lands, this
+# multi-target exporter scrapes every pod through its headless DNS name.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: redis-exporter }
+  template:
+    metadata:
+      labels: { app: redis-exporter }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+    spec:
+      containers:
+        - name: exporter
+          image: oliver006/redis_exporter:v1.62.0
+          args:
+            - --redis.addr=redis://demo-0.demo-headless.demo.svc.cluster.local:6379
+            - --redis.addr=redis://demo-1.demo-headless.demo.svc.cluster.local:6379
+            - --redis.addr=redis://demo-2.demo-headless.demo.svc.cluster.local:6379
+            - --check-keys=""
+          ports:
+            - { name: metrics, containerPort: 9121 }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+

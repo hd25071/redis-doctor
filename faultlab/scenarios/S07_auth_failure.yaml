@@ -1,0 +1,32 @@
+id: S07
+name: 密码 Secret 缺失导致认证失败
+category: auth_failure
+severity: P1
+held_out: false
+summary: 删除密码 Secret 并滚动重启，副本 AUTH 失败，复制中断，诊断工具自身也拿到 NOAUTH。
+alert: |
+  [P1] RedisAuthFailure
+  namespace=demo instance=demo pod=demo-1
+  summary: 副本 demo-1 报 NOAUTH Authentication required / WRONGPASS，主从复制中断，
+  同时 Secret redis-password 丢失。
+  labels: alertname=RedisAuthFailure, severity=critical
+symptom_keywords: [auth, replication]
+required_signals: [auth_failure]
+acceptable_actions:
+  - 检查密码 Secret 是否存在且 password 键正确
+  - 重建使用错误密码的 Pod
+wait_seconds: 5
+inject_sim:
+  - op: break_auth
+    params: {pods: [demo-1], secret: redis-password}
+recover_sim:
+  - op: restore_auth
+    params: {pods: [demo-1], secret: redis-password}
+inject_kubectl:
+  - kubectl delete secret redis-password -n demo
+  - kubectl delete pod demo-1 -n demo
+recover_kubectl:
+  - kubectl create secret generic redis-password -n demo --from-literal=password=s3cr3t-rd-demo
+kubectl_verified: false
+notes: 复制中断只是因为认证失败，不能判成网络分区——两条日志同时出现时以认证错误为准。
+

@@ -1,0 +1,29 @@
+id: S15
+name: 探针配置错误导致 NotReady
+category: probe_misconfig
+severity: P1
+held_out: true
+summary: readiness 探针指向 6380，Redis 实际监听 6379，Pod 永远 NotReady。
+alert: |
+  [P1] KubePodNotReady
+  namespace=demo instance=demo pod=demo-0
+  summary: demo-0 Ready=False 持续 10 分钟，Unhealthy 事件提示 Readiness probe failed 6380。
+  labels: alertname=KubePodNotReady, severity=critical
+symptom_keywords: [not_ready]
+required_signals: [readiness_probe_misconfig, pod_not_ready]
+acceptable_actions:
+  - 修正 readiness 探针端口为 6379
+wait_seconds: 5
+inject_sim:
+  - op: break_readiness_probe
+    params: {pod: demo-0, port: 6380}
+recover_sim:
+  - op: fix_readiness_probe
+    params: {pod: demo-0, port: 6379}
+inject_kubectl:
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"probePort":6380}}'
+recover_kubectl:
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"probePort":6379}}'
+kubectl_verified: false
+notes: held-out 场景：Redis 本身健康，只有探针错，容易被误判成主节点故障。
+

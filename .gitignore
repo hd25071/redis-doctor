@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Secrets never enter the repository. See deploy/redis/secret.example.yaml
+.env
+.env.*
+!.env.example
+deploy/**/secret.yaml
+
+# Local runtime state (SQLite trajectories, sandbox snapshots)
+data/
+*.sqlite3
+
+# Generated artefacts that are cheap to rebuild
+eval/results/*.tmp.json
+

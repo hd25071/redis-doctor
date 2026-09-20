@@ -1,0 +1,48 @@
+# Server-side enforcement of the read-only contract.
+#
+# The agent connects as `doctor`, whose ACL allows exactly the commands the
+# client-side whitelist allows. If the two ever drift, the server wins — which
+# is the point of having both.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-doctor-acl-init
+  namespace: demo
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: acl-init
+          image: redis:7.2
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: redis-password, key: password }
+            - name: DOCTOR_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: redis-doctor-acl, key: password }
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              for pod in demo-0 demo-1 demo-2; do
+                host="$pod.demo-headless.demo.svc.cluster.local"
+                echo "configuring ACL on $host"
+                redis-cli -h "$host" -a "$REDIS_PASSWORD" --no-auth-warning ACL SETUSER doctor on \
+                  ">$DOCTOR_PASSWORD" ~* -@all \
+                  +info +role +dbsize +slowlog|get +slowlog|len +client|list +client|info +config|get
+                redis-cli -h "$host" -a "$REDIS_PASSWORD" --no-auth-warning ACL SAVE || true
+              done
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redis-doctor-acl
+  namespace: demo
+type: Opaque
+stringData:
+  password: CHANGE_ME
+

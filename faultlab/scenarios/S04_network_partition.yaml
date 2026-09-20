@@ -1,0 +1,29 @@
+id: S04
+name: 副本与主断开（网络阻断）
+category: network_partition
+severity: P1
+held_out: true
+summary: 用 NetworkPolicy 阻断 6379，副本无法与主同步，主从延迟持续上涨。
+alert: |
+  [P1] RedisReplicationLinkDown
+  namespace=demo instance=demo pod=demo-1
+  summary: 副本 demo-1 的 master_link_status 持续为 down，主从偏移量差距持续扩大。
+  labels: alertname=RedisReplicationLinkDown, severity=critical
+symptom_keywords: [replication, latency]
+required_signals: [replica_link_down]
+acceptable_actions:
+  - 检查 NetworkPolicy 与主从链路连通性
+wait_seconds: 5
+inject_sim:
+  - op: block_replica_link
+    params: {pods: [demo-1, demo-2]}
+recover_sim:
+  - op: unblock_replica_link
+    params: {pods: [demo-1, demo-2]}
+inject_kubectl:
+  - kubectl apply -f faultlab/kubectl/netpol-deny-replica-sync.yaml
+recover_kubectl:
+  - kubectl delete networkpolicy redis-doctor-deny-replica-sync -n demo
+kubectl_verified: false
+notes: held-out 场景：手册里不写这一类，用来验证 RAG 是否只是背答案。
+

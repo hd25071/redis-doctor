@@ -1,0 +1,50 @@
+# Alert rules that feed the diagnosis path. They are deliberately written in
+# the vocabulary the agent's tools can follow up on (object + symptom), not as
+# conclusions.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-doctor-alert-rules
+  namespace: monitoring
+data:
+  redis-doctor.rules.yml: |
+    groups:
+      - name: redis-doctor-l1
+        rules:
+          - alert: RedisReplicationLinkDown
+            expr: redis_master_link_up == 0
+            for: 2m
+            labels: { severity: critical, team: redis }
+            annotations:
+              summary: "副本 {{ $labels.pod }} 与主节点链路中断"
+          - alert: RedisFullResyncStorm
+            expr: increase(redis_sync_full_total[10m]) > 3
+            for: 5m
+            labels: { severity: critical }
+            annotations:
+              summary: "{{ $labels.pod }} 出现全量同步风暴"
+          - alert: RedisMemoryHighWatermark
+            expr: redis_memory_used_ratio > 0.9
+            for: 5m
+            labels: { severity: warning }
+            annotations:
+              summary: "{{ $labels.pod }} 内存水位超过 90%"
+          - alert: RedisMaxClientsReached
+            expr: redis_connected_clients >= redis_config_maxclients
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: "{{ $labels.pod }} 连接数达到 maxclients"
+          - alert: RedisHighLatency
+            expr: redis_commands_duration_seconds{quantile="0.99"} > 0.05
+            for: 5m
+            labels: { severity: warning }
+            annotations:
+              summary: "{{ $labels.pod }} 命令 p99 延迟超过 50ms"
+          - alert: KubePodOOMKilled
+            expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} > 0
+            for: 1m
+            labels: { severity: critical }
+            annotations:
+              summary: "{{ $labels.pod }} 容器上一次终止原因为 OOMKilled"
+

@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-doctor
+  namespace: redis-doctor
+spec:
+  # SQLite + Chroma/index are single-writer, so exactly one replica and Recreate.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-doctor
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-doctor
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8099"
+    spec:
+      serviceAccountName: doctor-reader
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: ghcr.io/OWNER/redis-doctor:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "rdctl.py", "serve", "--host", "0.0.0.0", "--port", "8099"]
+          ports:
+            - { name: http, containerPort: 8099 }
+          envFrom:
+            - configMapRef: { name: redis-doctor-config }
+            - secretRef: { name: redis-doctor-secrets, optional: true }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/redis-doctor }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: redis-doctor-data }
+        - name: tmp
+          emptyDir: {}
+

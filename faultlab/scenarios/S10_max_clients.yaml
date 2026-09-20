@@ -1,0 +1,29 @@
+id: S10
+name: 连接数耗尽
+category: max_clients
+severity: P1
+held_out: false
+summary: 压测客户端占满 maxclients，新连接被拒，业务侧出现 connection refused。
+alert: |
+  [P1] RedisMaxClientsReached
+  namespace=demo instance=demo pod=demo-0
+  summary: connected_clients 达到 maxclients=10000，10 分钟内 rejected_connections 持续增长。
+  labels: alertname=RedisMaxClientsReached, severity=critical
+symptom_keywords: [clients, latency]
+required_signals: [max_clients_reached]
+acceptable_actions:
+  - 排查连接池泄漏并评估 maxclients
+wait_seconds: 5
+inject_sim:
+  - op: exhaust_clients
+    params: {pod: demo-0, clients: 10000}
+recover_sim:
+  - op: release_clients
+    params: {pod: demo-0}
+inject_kubectl:
+  - sh -c 'for i in $(seq 1 10000); do (exec 3<>/dev/tcp/demo-headless.demo.svc.cluster.local/6379) & done; sleep 600'
+recover_kubectl:
+  - kubectl delete pod loadgen --ignore-not-found -n demo
+kubectl_verified: false
+notes: ""
+

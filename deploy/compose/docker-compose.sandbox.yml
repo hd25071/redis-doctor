@@ -1,0 +1,40 @@
+# Optional containerised agent.
+#
+# Fully isolated from any existing stack on the host:
+#   * project name `redis-doctor`, its own network and volume prefix
+#   * published only on 127.0.0.1:8099 (no conflict with 3000/9090/9093/9100)
+#   * no privileged mode, no host mounts, non-root user
+#
+#   docker compose -f deploy/compose/docker-compose.sandbox.yml up -d
+name: redis-doctor
+services:
+  agent:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    image: redis-doctor:local
+    container_name: redis-doctor-agent
+    user: "10001:10001"
+    environment:
+      RD_BACKEND: sandbox
+      RD_VARIANT: D
+      RD_VARIANT_LABEL: demo
+      RD_LLM_PROVIDER: reference
+      RD_NAMESPACE: demo
+      RD_REDIS_INSTANCE: demo
+      RD_DATA_DIR: /var/lib/redis-doctor
+      RD_WEBHOOK_TOKEN: ${RD_WEBHOOK_TOKEN:-}
+    ports:
+      - "127.0.0.1:8099:8099"
+    volumes:
+      - redis-doctor-data:/var/lib/redis-doctor
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  redis-doctor-data:
+    name: redis-doctor-data
+networks:
+  default:
+    name: redis-doctor-net
+

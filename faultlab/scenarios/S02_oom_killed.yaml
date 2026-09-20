@@ -1,0 +1,32 @@
+id: S02
+name: 主节点 OOMKilled
+category: oom_killed
+severity: P1
+held_out: false
+summary: 把容器内存 limit 调到很低再灌数据，容器被内核 OOMKill 后反复重启。
+alert: |
+  [P1] KubePodOOMKilled
+  namespace=demo instance=demo pod=demo-0 container=redis
+  summary: 容器 redis 最近 10 分钟内被 OOMKilled 3 次，restartCount=3，主节点内存持续贴近 limit。
+  labels: alertname=KubePodOOMKilled, severity=critical
+symptom_keywords: [restart, oom]
+required_signals: [pod_oom_killed]
+acceptable_actions:
+  - 提高 redis 容器 memory limit 或降低 maxmemory
+  - 重建被 OOMKilled 的主节点 Pod 以恢复服务
+wait_seconds: 5
+inject_sim:
+  - op: oom_kill
+    params: {pod: demo-0, restarts: 3, limit: 256Mi}
+recover_sim:
+  - op: restore_memory
+    params: {pod: demo-0}
+inject_kubectl:
+  - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"256Mi"}]'
+  - kubectl exec demo-0 -n demo -- redis-cli --no-auth-warning -r 3000 -i 0.01 SET oom:test 10000000
+recover_kubectl:
+  - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"1Gi"}]'
+  - kubectl delete pod demo-0 -n demo
+kubectl_verified: false
+notes: 关键证据是 lastState.terminated.reason=OOMKilled 与 OOMKilling 事件，而不是"重启次数多"。
+

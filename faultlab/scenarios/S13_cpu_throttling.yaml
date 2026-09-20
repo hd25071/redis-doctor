@@ -1,0 +1,29 @@
+id: S13
+name: CPU 限流导致抖动
+category: cpu_throttling
+severity: P2
+held_out: true
+summary: CPU limit 调到 100m，容器被 cfs 限流，延迟抖动但没有慢查询。
+alert: |
+  [P2] RedisLatencyJitter
+  namespace=demo instance=demo pod=demo-0
+  summary: 命令延迟在 10 分钟内周期性抖动，restartCount 为 0，慢日志为空。
+  labels: alertname=RedisLatencyJitter, severity=warning
+symptom_keywords: [latency]
+required_signals: [cpu_throttling]
+acceptable_actions:
+  - 评估 CPU limit 是否需要放宽
+wait_seconds: 5
+inject_sim:
+  - op: low_cpu_limit
+    params: {pod: demo-0, limit: 100m, ratio: 0.78}
+recover_sim:
+  - op: restore_cpu_limit
+    params: {pod: demo-0}
+inject_kubectl:
+  - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"100m"}]'
+recover_kubectl:
+  - kubectl patch statefulset demo -n demo --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"1"}]'
+kubectl_verified: false
+notes: held-out 场景：必须靠 cfs throttled 指标，而不是慢日志。
+

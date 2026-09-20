@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "redis-doctor"
+version = "0.1.0"
+description = "Fault-injection driven diagnosis agent for Redis on Kubernetes (LangGraph-style hypothesis verification loop)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "PyYAML>=6.0",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Real cluster backends. The default `sandbox` backend needs none of these,
+# which is what keeps `make demo` and CI free of any infrastructure.
+real = [
+  "kubernetes>=29.0.0",
+  "redis>=5.0",
+]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[tool.setuptools]
+packages = ["agent", "tools", "faultlab", "eval", "api", "sandbox", "knowledge"]
+py-modules = ["rdctl", "rdconfig", "deploy_checks", "ops_backup"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"eval/results/**" = ["ALL"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"

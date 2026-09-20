@@ -1,0 +1,14 @@
+# Local / containerised demo: everything runs against the in-process sandbox,
+# so a fault can be injected with `sandbox_scenario` and nothing in the cluster
+# is touched. This is the overlay used by `make cluster-up`-free demos.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - target: { kind: ConfigMap, name: redis-doctor-config }
+    patch: |-
+      - op: replace
+        path: /data/RD_BACKEND
+        value: sandbox
+

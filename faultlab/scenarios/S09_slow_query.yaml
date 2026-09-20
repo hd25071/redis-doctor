@@ -1,0 +1,30 @@
+id: S09
+name: 慢查询拖垮延迟
+category: slow_query
+severity: P2
+held_out: false
+summary: 客户端对大 key 执行 KEYS / SORT 等重命令，慢日志与 p99 延迟同时飙升。
+alert: |
+  [P2] RedisHighLatency
+  namespace=demo instance=demo pod=demo-0
+  summary: redis 命令 p99 延迟 > 500ms 持续 10 分钟，同时应用侧出现超时。
+  labels: alertname=RedisHighLatency, severity=warning
+symptom_keywords: [latency]
+required_signals: [slow_query_detected]
+acceptable_actions:
+  - 定位并优化大 key / 高复杂度命令
+wait_seconds: 5
+inject_sim:
+  - op: slow_query_load
+    params: {pod: demo-0}
+recover_sim:
+  - op: clear_slow_query
+    params: {pod: demo-0}
+inject_kubectl:
+  - kubectl exec demo-0 -n demo -- redis-cli --no-auth-warning DEBUG SLEEP 0
+  - kubectl exec demo-0 -n demo -- sh -c 'redis-cli --no-auth-warning -r 500 KEYS "session:*" >/dev/null'
+recover_kubectl:
+  - kubectl exec demo-0 -n demo -- redis-cli --no-auth-warning SLOWLOG RESET
+kubectl_verified: false
+notes: 只看延迟无法区分 CPU 限流，必须看慢日志。
+

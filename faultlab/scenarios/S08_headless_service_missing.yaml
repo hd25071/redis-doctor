@@ -1,0 +1,29 @@
+id: S08
+name: Headless Service 缺失导致域名解析失败
+category: dns_resolution
+severity: P1
+held_out: false
+summary: 删除 demo-headless，副本无法解析主节点域名，replicaof 直接失败。
+alert: |
+  [P1] RedisReplicaCannotResolveMaster
+  namespace=demo instance=demo
+  summary: 副本 demo-1 / demo-2 日志出现 Name or service not known，主从同步持续失败。
+  labels: alertname=RedisReplicaCannotResolveMaster, severity=critical
+symptom_keywords: [replication, not_ready]
+required_signals: [dns_resolution_failure, headless_service_missing]
+acceptable_actions:
+  - 重建被删除的 Headless Service
+wait_seconds: 5
+inject_sim:
+  - op: delete_headless_service
+    params: {pods: [demo-1, demo-2]}
+recover_sim:
+  - op: restore_headless_service
+    params: {pods: [demo-1, demo-2]}
+inject_kubectl:
+  - kubectl delete service demo-headless -n demo
+recover_kubectl:
+  - kubectl apply -f deploy/redis/demo-headless-service.yaml
+kubectl_verified: false
+notes: 与网络分区的区别是 Service 对象本身不存在。
+

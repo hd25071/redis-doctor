@@ -1,0 +1,29 @@
+id: S06
+name: 镜像拉取失败
+category: image_pull
+severity: P1
+held_out: false
+summary: 把 spec.version 改成不存在的标签，Pod 进入 ImagePullBackOff。
+alert: |
+  [P1] KubePodImagePullBackOff
+  namespace=demo instance=demo pod=demo-0
+  summary: demo-0 处于 ImagePullBackOff，无法拉取 redis:7.2.9-typo。
+  labels: alertname=KubePodImagePullBackOff, severity=critical
+symptom_keywords: [image, pending]
+required_signals: [image_pull_error]
+acceptable_actions:
+  - 确认 spec.version 对应的镜像在镜像仓库存在
+wait_seconds: 5
+inject_sim:
+  - op: bad_image
+    params: {pod: demo-0, tag: 7.2.9-typo}
+recover_sim:
+  - op: good_image
+    params: {pod: demo-0, tag: "7.2"}
+inject_kubectl:
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"version":"7.2.9-typo"}}'
+recover_kubectl:
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"version":"7.2"}}'
+kubectl_verified: false
+notes: ""
+

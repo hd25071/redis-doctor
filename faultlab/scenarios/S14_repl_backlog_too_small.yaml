@@ -1,0 +1,31 @@
+id: S14
+name: repl-backlog 过小导致全量同步风暴
+category: replication_backlog
+severity: P1
+held_out: false
+summary: 断链重连时 backlog 太小无法部分重同步，副本反复全量同步，sync_full 暴涨。
+alert: |
+  [P1] RedisFullResyncStorm
+  namespace=demo instance=demo pod=demo-1
+  summary: 副本 10 分钟内触发多次 Full resync from master，主从链路时断时续。
+  labels: alertname=RedisFullResyncStorm, severity=critical
+symptom_keywords: [replication, latency]
+required_signals: [replication_full_resync_storm]
+acceptable_actions:
+  - 上调 repl-backlog-size，减少全量同步
+wait_seconds: 5
+inject_sim:
+  - op: shrink_repl_backlog
+    params: {pod: demo-1, size_bytes: 16384}
+recover_sim:
+  - op: restore_repl_backlog
+    params: {pod: demo-1, size_bytes: 67108864}
+inject_kubectl:
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"config":{"repl-backlog-size":"16kb"}}}'
+  - kubectl exec demo-1 -n demo -- redis-cli --no-auth-warning DEBUG SLEEP 0
+  - kubectl delete pod demo-1 -n demo
+recover_kubectl:
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"config":{"repl-backlog-size":"64mb"}}}'
+kubectl_verified: false
+notes: 与网络分区的区别是链路能恢复但反复全量同步。
+

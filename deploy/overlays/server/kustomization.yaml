@@ -1,0 +1,24 @@
+# Long-lived demonstration / delivery:
+#   * the agent runs inside the cluster (in-cluster ServiceAccount)
+#   * it talks to the real diagnosed cluster (RD_BACKEND=real)
+#   * the UI/API is exposed through Traefik Ingress behind Basic Auth + VPN
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+  - ingress.yaml
+patches:
+  - target: { kind: ConfigMap, name: redis-doctor-config }
+    patch: |-
+      - op: replace
+        path: /data/RD_BACKEND
+        value: real
+      - op: replace
+        path: /data/RD_LLM_PROVIDER
+        value: openai_compat
+  - target: { kind: Deployment, name: redis-doctor }
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 2Gi
+

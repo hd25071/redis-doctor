@@ -1,0 +1,79 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: doctor-reader
+  namespace: demo
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, events, services, endpoints, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: ["apps"]
+    resources: [statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: ["ops.example.com"]
+    resources: [redis]
+    verbs: [get, list]
+  # Explicitly absent: secrets, pods/exec, and every write verb.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: doctor-reader
+  namespace: demo
+subjects:
+  - kind: ServiceAccount
+    name: doctor-reader
+    namespace: redis-doctor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: doctor-reader
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: doctor-actuator
+  namespace: demo
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: doctor-actuator
+  namespace: demo
+subjects:
+  - kind: ServiceAccount
+    name: doctor-actuator
+    namespace: redis-doctor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: doctor-actuator
+---
+# Node-level reads are cluster-scoped, so they need a ClusterRole. Kept to
+# get/list with no write verbs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: doctor-reader-nodes
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: doctor-reader-nodes
+subjects:
+  - kind: ServiceAccount
+    name: doctor-reader
+    namespace: redis-doctor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: doctor-reader-nodes
+

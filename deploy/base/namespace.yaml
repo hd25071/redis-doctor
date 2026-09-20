@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: redis-doctor
+  labels:
+    app.kubernetes.io/name: redis-doctor
+    pod-security.kubernetes.io/enforce: restricted
+

@@ -1,0 +1,21 @@
+# Scenarios that are deliberately absent from the handbook.
+#
+# Why: if the handbook contained the answer for every injected fault, a good
+# RAG score would prove nothing (the agent could be reciting the answer key).
+# These four categories are injected but never described, so groups C/D must
+# generalise from mechanism-level knowledge. tests/test_kb_leakage.py fails the
+# build if any of these markers appears in the handbook.
+
+held_out:
+  - id: S04
+    category: network_partition
+    markers: ["NetworkPolicy", "网络分区", "分区", "connection timed out"]
+  - id: S11
+    category: disk_full
+    markers: ["No space left on device", "磁盘写满", "MISCONF", "写满"]
+  - id: S13
+    category: cpu_throttling
+    markers: ["throttl", "cfs", "CPU 限流"]
+  - id: S15
+    category: probe_misconfig
+    markers: ["readiness", "探针", "6380"]

@@ -1,0 +1,17 @@
+# The StatefulSet's headless Service. S08 deletes this object on purpose, and
+# the recovery path re-applies exactly this file.
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-headless
+  namespace: demo
+  labels:
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/name: redis
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/instance: demo
+  ports:
+    - { name: redis, port: 6379, targetPort: 6379 }
+

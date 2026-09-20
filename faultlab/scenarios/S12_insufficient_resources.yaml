@@ -1,0 +1,30 @@
+id: S12
+name: 资源请求过大导致无法调度
+category: insufficient_resources
+severity: P1
+held_out: false
+summary: requests 设成 6Gi，节点放不下，Pod 永久 Pending 并报 Insufficient memory。
+alert: |
+  [P1] KubePodNotScheduled
+  namespace=demo instance=demo pod=demo-2
+  summary: demo-2 一直 Pending，FailedScheduling 事件提示 Insufficient memory / Insufficient cpu。
+  labels: alertname=KubePodNotScheduled, severity=critical
+symptom_keywords: [pending]
+required_signals: [insufficient_resources]
+acceptable_actions:
+  - 下调 requests 或扩容节点
+wait_seconds: 5
+inject_sim:
+  - op: oversize_requests
+    params: {pod: demo-2, memory: 6Gi, cpu: "4"}
+recover_sim:
+  - op: shrink_requests
+    params: {pod: demo-2}
+inject_kubectl:
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"resources":{"requests":{"memory":"6Gi","cpu":"4"}}}}'
+  - kubectl delete pod demo-2 -n demo
+recover_kubectl:
+  - kubectl patch redis demo -n demo --type=merge -p '{"spec":{"resources":{"requests":{"memory":"256Mi","cpu":"100m"}}}}'
+kubectl_verified: false
+notes: ""
+

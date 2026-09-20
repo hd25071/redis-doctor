@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-doctor-data
+  namespace: redis-doctor
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+  # storageClassName is intentionally left unset so the cluster default applies.
+  # A containerised k3s loses this on restart; see docs/runbook.md.
+

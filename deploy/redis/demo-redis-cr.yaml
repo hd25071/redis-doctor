@@ -1,0 +1,20 @@
+# The diagnosed object: 3-node Redis replication built by redis-operator.
+apiVersion: ops.example.com/v1alpha1
+kind: Redis
+metadata:
+  name: demo
+  namespace: demo
+spec:
+  mode: replication
+  replicas: 3
+  version: "7.2"
+  storageSize: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  config:
+    # A production-ish baseline: the diagnosis relies on these being explicit.
+    repl-backlog-size: 1mb
+    repl-timeout: "10"
+    min-replicas-to-write: "1"
+

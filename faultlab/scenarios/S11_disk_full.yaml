@@ -1,0 +1,29 @@
+id: S11
+name: 数据盘写满
+category: disk_full
+severity: P1
+held_out: true
+summary: 小容量 PVC 被写满，RDB 保存失败，Redis 进入 MISCONF 拒绝写入。
+alert: |
+  [P1] RedisPersistenceFailing
+  namespace=demo instance=demo pvc=data-demo-0
+  summary: redis 日志出现 No space left on device 与 MISCONF，写入被拒绝；PVC 使用率 100%。
+  labels: alertname=RedisPersistenceFailing, severity=critical
+symptom_keywords: [disk, latency]
+required_signals: [disk_full_write_error]
+acceptable_actions:
+  - 扩容数据卷或清理无用数据
+wait_seconds: 5
+inject_sim:
+  - op: fill_disk
+    params: {pvc: data-demo-0, pod: demo-0}
+recover_sim:
+  - op: clear_disk
+    params: {pvc: data-demo-0, pod: demo-0}
+inject_kubectl:
+  - kubectl exec demo-0 -n demo -- sh -c 'dd if=/dev/zero of=/data/fill bs=1M count=900'
+recover_kubectl:
+  - kubectl exec demo-0 -n demo -- rm -f /data/fill
+kubectl_verified: false
+notes: held-out 场景。
+

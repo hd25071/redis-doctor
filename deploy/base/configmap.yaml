@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-doctor-config
+  namespace: redis-doctor
+data:
+  RD_NAMESPACE: demo
+  RD_REDIS_INSTANCE: demo
+  RD_BACKEND: sandbox
+  RD_VARIANT: D
+  RD_MAX_STEPS: "12"
+  RD_MAX_TOOL_CALLS: "30"
+  RD_MAX_SECONDS: "180"
+  RD_APPROVAL_REQUIRED: "true"
+  RD_ALERT_COOLDOWN_SECONDS: "900"
+  RD_LLM_PROVIDER: reference
+  RD_LLM_TEMPERATURE: "0"
+  RD_LLM_MODEL: deepseek-chat
+  RD_KB_INDEX: knowledge/index/index.json
+  RD_DATA_DIR: /var/lib/redis-doctor
+  RD_PROM_URL: http://prometheus.monitoring.svc.cluster.local:9090
+  RD_REDIS_ACL_USER: doctor
+

@@ -1,0 +1,50 @@
+# Egress is allow-listed, ingress only from the monitoring namespace.
+#
+# Domain-level restrictions (the LLM endpoint) cannot be expressed in
+# NetworkPolicy; docs/security.md states that honestly and lists the two
+# options (egress proxy, or an explicit namespace allow rule).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-doctor-default-deny
+  namespace: redis-doctor
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - { protocol: TCP, port: 8099 }
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Kubernetes API (diagnosis reads)
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0, except: [169.254.0.0/16] }
+      ports:
+        - { protocol: TCP, port: 6443 }
+    # Redis + metrics in the diagnosed namespace
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: demo }
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # Prometheus
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: monitoring }
+      ports:
+        - { protocol: TCP, port: 9090 }
+    # LLM endpoint (see docs/security.md: keep this narrow in real deployments)
+    - to:
+        - ipBlock: { cidr: 0.0.0.0/0 }
+      ports:
+        - { protocol: TCP, port: 443 }
+
