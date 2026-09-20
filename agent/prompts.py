@@ -103,23 +103,38 @@ def evaluate_prompt(state_json: dict[str, Any]) -> str:
 
 
 def report_prompt(state_json: dict[str, Any], trace: list[dict]) -> str:
+    compact = [
+        {
+            "call_id": item.get("call_id"),
+            "tool": item.get("tool"),
+            "args": item.get("args"),
+            "signals": item.get("signals"),
+            "output": (item.get("output") or "")[:500],
+        }
+        for item in trace
+    ]
     return f"""# 任务
 给出最终结构化结论。evidence 必须逐条对应下面 trace 里真实存在的 call_id 与 signal。
+
+# 选类别的规则
+1. 选**最具体**、且被 trace 中 signal 直接支撑的类别；多个候选都成立时，选解释"为什么变成
+   这样"的类别，而不是只描述症状的类别。
+2. 出现下列信号时必须选对应类别，不允许回退到 pod_restart：
+   pod_oom_killed→oom_killed；invalid_config_directive→invalid_config；
+   image_pull_error→image_pull；auth_failure→auth_failure；
+   dns_resolution_failure→dns_resolution；readiness_probe_misconfig→probe_misconfig；
+   insufficient_resources→insufficient_resources；pvc_pending→storage_provision；
+   maxmemory_reached_noeviction→maxmemory_reached；disk_full_write_error→disk_full；
+   max_clients_reached→max_clients；cpu_throttling→cpu_throttling；
+   slow_query_detected→slow_query；replication_full_resync_storm→replication_backlog。
+3. 只有引用到 pod_recreated_recently、且上面那些信号都没出现时，才允许选 pod_restart。
+4. 信号名以每次调用的 signals 字段为准，不要凭输出正文猜测。
 
 # 当前状态
 {json.dumps(state_json, ensure_ascii=False, indent=2)}
 
 # 工具调用轨迹（call_id / tool / signals / 返回片段）
-{
-        json.dumps(
-            [
-                {k: t.get(k) for k in ("call_id", "tool", "args", "signals", "output")}
-                for t in trace
-            ],
-            ensure_ascii=False,
-            indent=2,
-        )[:24000]
-    }
+{json.dumps(compact, ensure_ascii=False, indent=2)[:16000]}
 
 # 输出 JSON
 {{"root_cause": "枚举内的类别", "summary": "", "confidence": 0.0,
