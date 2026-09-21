@@ -1,9 +1,8 @@
-"""Server-rendered trajectory UI.
+"""Server-rendered console: dashboard, trajectory view and approval queue.
 
-The plan suggested Streamlit; a server-rendered page is used instead so the
-demo has zero extra dependencies and one port. The page that matters for the
-3-minute video is the trajectory view: every tool call, what it returned, which
-evidence was cited, and what the approval gate decided.
+No JavaScript and no front-end build: one HTML page per view, served by the
+same FastAPI process that owns the trajectory store. The console is therefore
+part of the tested surface, and a demo needs a single command.
 """
 
 from __future__ import annotations
@@ -13,21 +12,35 @@ import json
 from typing import Any
 
 STYLE = """
-body{font-family:ui-sans-serif,Segoe UI,Helvetica,Arial,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}
-header{padding:18px 24px;background:#161a22;border-bottom:1px solid #262c38}
-h1{font-size:18px;margin:0}
-a{color:#7cc4ff;text-decoration:none}
-main{padding:20px 24px;max-width:1180px}
+:root{--bg:#0f1216;--panel:#161a21;--line:#242b35;--fg:#e7ebf0;--muted:#96a1af;--accent:#63b3ff}
+*{box-sizing:border-box}
+body{font-family:ui-sans-serif,"Segoe UI",Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+header{display:flex;justify-content:space-between;align-items:baseline;padding:14px 22px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:16px;margin:0;font-weight:600}
+h2{font-size:14px;margin:20px 0 8px}
+h3{font-size:12px;margin:16px 0 6px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+main{padding:18px 22px 40px;max-width:1240px}
+.muted{color:var(--muted)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.card .v{font-size:22px;font-weight:600}
+.card .k{font-size:12px;color:var(--muted);margin-top:2px}
 table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{text-align:left;padding:7px 10px;border-bottom:1px solid #232a35;vertical-align:top}
-th{background:#161a22;position:sticky;top:0}
-code,pre{font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
-pre{background:#12161d;border:1px solid #232a35;border-radius:6px;padding:10px;overflow:auto;max-height:320px}
-.pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11.5px;background:#243040;color:#9fd0ff}
-.ok{background:#1c3324;color:#8fe0a8}.bad{background:#3a1f24;color:#ff9aa8}
-.warn{background:#3a3320;color:#ffd479}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-small{color:#9aa4b2}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--panel);color:var(--muted);font-weight:600}
+code,pre{font-family:ui-monospace,Consolas,"Courier New",monospace;font-size:12.5px}
+pre{background:#12161d;border:1px solid var(--line);border-radius:6px;padding:9px;overflow:auto;max-height:300px;white-space:pre-wrap}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11.5px;background:#233043;color:#a8d3ff}
+.ok{background:#17301f;color:#8fe0a8}.bad{background:#3a1d22;color:#ff9aa8}.warn{background:#37301c;color:#ffd479}
+form.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+select,input,button{background:#12161d;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:13px}
+button{cursor:pointer}
+button.primary{background:#1b4a7a;border-color:#2a6ea8}
+button.danger{background:#4a1f26;border-color:#7a2b36}
+small{color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:20px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
 """
 
 
@@ -38,46 +51,124 @@ def _esc(value: Any) -> str:
 def layout(title: str, body: str) -> str:
     return (
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
-        f"<title>{_esc(title)}</title><style>{STYLE}</style></head>"
-        f"<body><header><h1>redis-doctor · {_esc(title)}</h1>"
-        "<small>Fault-injection driven diagnosis for Redis on Kubernetes</small>"
-        "</header><main>" + body + "</main></body></html>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<title>{_esc(title)} · redis-doctor</title><style>{STYLE}</style></head><body>"
+        "<header><h1><a href='/ui' style='color:inherit'>redis-doctor</a></h1>"
+        "<small>Redis on Kubernetes 诊断控制台</small></header><main>"
+        + body
+        + "</main></body></html>"
     )
 
 
-def index_page(records: list[dict[str, Any]], stats: dict[str, Any]) -> str:
-    rows = []
+def _status_pill(status: str) -> str:
+    klass = (
+        "ok"
+        if status in {"ok", "approved_executed"}
+        else ("warn" if status == "waiting_approval" else "bad")
+    )
+    return f"<span class='pill {klass}'>{_esc(status)}</span>"
+
+
+def dashboard_page(
+    records: list[dict[str, Any]],
+    stats: dict[str, Any],
+    scenarios: list[dict[str, Any]],
+    pending: list[dict[str, Any]],
+    banner: str = "",
+) -> str:
+    approvals = stats.get("approvals", {}) or {}
+    distribution: dict[str, int] = {}
     for record in records:
-        status = record.get("status", "")
-        klass = (
-            "ok"
-            if status in {"ok", "approved_executed"}
-            else ("warn" if status == "waiting_approval" else "bad")
-        )
-        rows.append(
-            "<tr>"
-            f"<td><a href='/ui/diagnoses/{_esc(record['id'])}'>{_esc(record['id'])}</a></td>"
-            f"<td>{_esc(record.get('alertname'))}</td>"
-            f"<td>{_esc(record.get('root_cause'))}</td>"
-            f"<td>{_esc(record.get('confidence'))}</td>"
-            f"<td><span class='pill {klass}'>{_esc(status)}</span></td>"
-            f"<td>{_esc(record.get('variant'))}</td>"
-            f"<td><small>{_esc(record.get('alert', '').splitlines()[0])}</small></td>"
-            "</tr>"
-        )
-    body = [
-        "<div class='grid'><div><h3>统计</h3><pre>"
-        + _esc(json.dumps(stats, ensure_ascii=False, indent=2))
-        + "</pre></div><div><h3>审批队列</h3><p>"
-        + "<a href='/ui/approvals'>查看待审批动作</a>"
-        + "</p><p><a href='/metrics'>Prometheus 指标</a></p>"
-        + "<p><a href='/docs'>OpenAPI 文档</a></p></div></div>",
-        "<h3>最近诊断</h3><table><tr><th>ID</th><th>告警</th><th>根因</th>"
-        "<th>置信度</th><th>状态</th><th>组</th><th>告警摘要</th></tr>",
-        "".join(rows) or "<tr><td colspan=7>还没有诊断记录</td></tr>",
-        "</table>",
+        cause = record.get("root_cause") or "-"
+        distribution[cause] = distribution.get(cause, 0) + 1
+    cards = [
+        ("诊断总数", stats.get("diagnoses", 0)),
+        ("待审批", approvals.get("pending", 0)),
+        ("已批准", approvals.get("approved", 0)),
+        ("已拒绝", approvals.get("denied", 0)),
+        ("场景总数", len(scenarios)),
+        ("held-out", sum(1 for s in scenarios if s["held_out"])),
     ]
-    return layout("diagnoses", "".join(body))
+    options = "".join(
+        f"<option value='{_esc(s['id'])}'>{_esc(s['id'])} · {_esc(s['category'])}"
+        f"{' · held-out' if s['held_out'] else ''}</option>"
+        for s in scenarios
+    )
+    rows = "".join(
+        "<tr>"
+        f"<td><a href='/ui/diagnoses/{_esc(r['id'])}'>{_esc(r['id'])}</a></td>"
+        f"<td>{_esc(r.get('alertname') or '-')}</td>"
+        f"<td><span class='pill'>{_esc(r.get('root_cause') or '-')}</span></td>"
+        f"<td>{_esc(r.get('confidence'))}</td>"
+        f"<td>{_status_pill(r.get('status', ''))}</td>"
+        f"<td>{_esc(r.get('variant'))}</td>"
+        f"<td><small>{_esc((r.get('alert') or '').splitlines()[0])}</small></td>"
+        "</tr>"
+        for r in records
+    )
+    approval_rows = "".join(
+        "<tr>"
+        f"<td><a href='/ui/diagnoses/{_esc(a['diagnosis_id'])}'>{_esc(a['diagnosis_id'])}</a></td>"
+        f"<td>{_esc(a['action'].get('action'))}</td>"
+        f"<td>{_esc(a['action'].get('tier'))} / {_esc(a['action'].get('risk'))}</td>"
+        f"<td><code>{_esc(a['action'].get('command'))}</code></td>"
+        f"<td><form class='inline' method='post' action='/ui/approvals/{_esc(a['id'])}'>"
+        "<input type='hidden' name='decision' value='approve'>"
+        "<button class='primary'>批准</button></form></td>"
+        f"<td><form class='inline' method='post' action='/ui/approvals/{_esc(a['id'])}'>"
+        "<input type='hidden' name='decision' value='deny'>"
+        "<button class='danger'>拒绝</button></form></td>"
+        "</tr>"
+        for a in pending
+    )
+    body = [
+        "<p class='muted'>"
+        + _esc(
+            banner or "选择场景注入故障并运行诊断；每次工具调用、证据引用与审批动作都会写入轨迹。"
+        )
+        + "</p>",
+        "<div class='cards'>"
+        + "".join(
+            f"<div class='card'><div class='v'>{_esc(v)}</div><div class='k'>{_esc(k)}</div></div>"
+            for k, v in cards
+        )
+        + "</div>",
+        "<div class='grid2'><div>",
+        "<h3>运行诊断</h3>",
+        "<form class='inline' method='post' action='/ui/diagnose'>",
+        f"<select name='scenario'>{options}</select>",
+        "<select name='variant'><option value='D'>D 完整版</option><option value='C'>C 手册检索</option>"
+        "<option value='B'>B 单次工具</option><option value='A'>A 仅告警</option></select>",
+        "<button class='primary'>注入并诊断</button>",
+        "</form>",
+        "<h3>诊断记录</h3>",
+        "<table><tr><th>ID</th><th>告警</th><th>根因</th><th>置信度</th><th>状态</th>"
+        "<th>组</th><th>告警摘要</th></tr>",
+        rows or "<tr><td colspan='7' class='muted'>还没有诊断记录</td></tr>",
+        "</table></div><div>",
+        "<h3>待审批动作</h3>",
+        "<table><tr><th>诊断</th><th>动作</th><th>等级</th><th>命令</th><th></th><th></th></tr>",
+        approval_rows or "<tr><td colspan='6' class='muted'>无待审批动作</td></tr>",
+        "</table>",
+        "<h3>根因分布</h3>",
+        "<table>"
+        + (
+            "".join(
+                f"<tr><td>{_esc(cause)}</td><td>{count}</td></tr>"
+                for cause, count in sorted(distribution.items(), key=lambda i: -i[1])[:8]
+            )
+            or "<tr><td class='muted'>暂无数据</td></tr>"
+        )
+        + "</table>",
+        "<h3>接口</h3>",
+        "<table><tr><td><a href='/scenarios'>/scenarios</a></td><td>场景清单</td></tr>"
+        "<tr><td><a href='/diagnoses'>/diagnoses</a></td><td>诊断记录（JSON）</td></tr>"
+        "<tr><td><a href='/approvals'>/approvals</a></td><td>审批队列（JSON）</td></tr>"
+        "<tr><td><a href='/metrics'>/metrics</a></td><td>Prometheus 指标</td></tr>"
+        "<tr><td><a href='/docs'>/docs</a></td><td>OpenAPI</td></tr></table>",
+        "</div></div>",
+    ]
+    return layout("控制台", "".join(body))
 
 
 def detail_page(record: dict[str, Any]) -> str:
@@ -100,7 +191,7 @@ def detail_page(record: dict[str, Any]) -> str:
         f"<tr><td><code>{_esc(call.get('call_id'))}</code></td><td>{_esc(call.get('tool'))}</td>"
         f"<td><small>{_esc(json.dumps(call.get('args'), ensure_ascii=False))}</small></td>"
         f"<td><small>{_esc(', '.join(call.get('signals') or []))}</small></td>"
-        f"<td>{'<span class="pill bad">BLOCKED</span> ' + _esc(call.get('blocked_reason')) if call.get('blocked') else ''}"
+        f"<td>{'<span class="pill bad">BLOCKED</span>' if call.get('blocked') else ''}"
         f"{'<span class="pill warn">truncated</span>' if call.get('truncated') else ''}</td>"
         f"<td><pre>{_esc((call.get('output') or '')[:1200])}</pre></td></tr>"
         for call in record.get("trace", [])
@@ -118,26 +209,26 @@ def detail_page(record: dict[str, Any]) -> str:
         for a in report.get("suggested_actions", [])
     )
     body = f"""
-    <p><a href="/ui">&larr; 返回列表</a></p>
+    <p><a href="/ui">← 返回控制台</a></p>
     <h3>结论</h3>
     <p>根因 <span class="pill">{_esc(report.get("root_cause"))}</span>
        {_esc(report.get("root_cause_label"))} · 置信度 <b>{_esc(report.get("confidence"))}</b>
-       · 轮次 {_esc(report.get("iterations"))} · 状态 <span class="pill">{_esc(record.get("status"))}</span></p>
+       · 轮次 {_esc(report.get("iterations"))} · 状态 {_status_pill(record.get("status", ""))}</p>
     <p>{_esc(report.get("summary"))}</p>
-    <h4>证据（每条都可追溯到一次工具调用）</h4>
+    <h3>证据（每条对应一次工具调用）</h3>
     <table><tr><th>call_id</th><th>工具</th><th>信号</th><th>原文</th></tr>{evidence}</table>
-    <h4>假设</h4>
+    <h3>假设</h3>
     <table><tr><th>id</th><th>类别</th><th>状态</th><th>置信度</th><th>支持</th><th>反驳</th></tr>{hypotheses}</table>
-    <h4>建议动作</h4><ul>{actions or "<li>无</li>"}</ul>
-    <h4>审批</h4>
-    <table><tr><th>id</th><th>动作</th><th>等级</th><th>状态</th><th>决策人</th></tr>{approvals}</table>
-    <h4>完整工具轨迹</h4>
+    <h3>建议动作</h3><ul>{actions or '<li class="muted">无</li>'}</ul>
+    <h3>审批</h3>
+    <table><tr><th>id</th><th>动作</th><th>等级</th><th>状态</th><th>决策人</th><th></th></tr>{approvals}</table>
+    <h3>完整工具轨迹</h3>
     <table><tr><th>call_id</th><th>工具</th><th>参数</th><th>信号</th><th>标记</th><th>返回（截断显示）</th></tr>{calls}</table>
-    <h4>原始状态</h4>
+    <h3>审计与预算</h3>
     <pre>{_esc(json.dumps(state.get("audit"), ensure_ascii=False, indent=2))}</pre>
     <pre>{_esc(json.dumps(state.get("budget"), ensure_ascii=False, indent=2))}</pre>
     """
-    return layout(f"diagnosis {record['id']}", body)
+    return layout(f"诊断 {record['id']}", body)
 
 
 def approvals_page(pending: list[dict[str, Any]]) -> str:
@@ -146,20 +237,20 @@ def approvals_page(pending: list[dict[str, Any]]) -> str:
         f"<td><a href='/ui/diagnoses/{_esc(a['diagnosis_id'])}'>{_esc(a['diagnosis_id'])}</a></td>"
         f"<td>{_esc(a['action'].get('action'))}</td>"
         f"<td>{_esc(a['action'].get('tier'))} / {_esc(a['action'].get('risk'))}</td>"
-        f"<td><pre>{_esc(a['action'].get('command'))}</pre></td>"
-        f"<td><form method='post' action='/ui/approvals/{_esc(a['id'])}'>"
+        f"<td><code>{_esc(a['action'].get('command'))}</code></td>"
+        f"<td><form class='inline' method='post' action='/ui/approvals/{_esc(a['id'])}'>"
         "<input type='hidden' name='decision' value='approve'>"
-        "<button type='submit'>批准</button></form>"
-        f"<form method='post' action='/ui/approvals/{_esc(a['id'])}'>"
+        "<button class='primary'>批准</button></form>"
+        f"<form class='inline' method='post' action='/ui/approvals/{_esc(a['id'])}'>"
         "<input type='hidden' name='decision' value='deny'>"
-        "<button type='submit'>拒绝</button></form></td></tr>"
+        "<button class='danger'>拒绝</button></form></td></tr>"
         for a in pending
     )
     body = (
-        "<p><a href='/ui'>&larr; 返回列表</a></p><h3>待审批动作</h3>"
-        "<p><small>展示的是将要调用的 API 与参数，而不是模型对动作的描述。</small></p>"
+        "<p><a href='/ui'>← 返回控制台</a></p><h3>待审批动作</h3>"
+        "<p class='muted'>展示将要调用的 API 与参数，而不是模型对动作的描述。</p>"
         "<table><tr><th>id</th><th>诊断</th><th>动作</th><th>等级</th><th>命令</th><th>决策</th></tr>"
-        + (rows or "<tr><td colspan=6>没有待审批动作</td></tr>")
+        + (rows or "<tr><td colspan='6' class='muted'>无待审批动作</td></tr>")
         + "</table>"
     )
-    return layout("approvals", body)
+    return layout("审批", body)

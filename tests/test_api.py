@@ -123,6 +123,27 @@ def test_ui_and_metrics_render(client) -> None:
     assert "redis_doctor_unauthorized_total" in metrics
 
 
+def test_console_dashboard_and_launcher(client) -> None:
+    scenarios = client.get("/scenarios").json()["items"]
+    assert len(scenarios) == 16
+    assert {"id", "category", "held_out"} <= set(scenarios[0])
+
+    dashboard = client.get("/ui")
+    assert dashboard.status_code == 200
+    for marker in ("运行诊断", "待审批动作", "根因分布", "/ui/diagnose"):
+        assert marker in dashboard.text
+
+    # The launcher posts a scenario and lands on that diagnosis' trajectory page.
+    fired = client.post(
+        "/ui/diagnose", data={"scenario": "S02", "variant": "D"}, follow_redirects=False
+    )
+    assert fired.status_code == 303
+    assert fired.headers["location"].startswith("/ui/diagnoses/")
+
+    bad = client.post("/ui/diagnose", data={"scenario": "S99", "variant": "D"})
+    assert bad.status_code == 422
+
+
 def test_sandbox_scenario_refused_on_real_backend(client) -> None:
     client.app.state.settings.backend = "real"
     response = client.post("/diagnose", json={"alert_text": "x", "sandbox_scenario": "S02"})

@@ -90,6 +90,19 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
         SimCluster(settings.namespace, settings.instance) if settings.backend != "real" else None
     )
 
+    def _scenarios() -> list[dict[str, Any]]:
+        lab = FaultLab(cluster, settings.resolve(settings.scenarios_dir))
+        return [
+            {
+                "id": item.id,
+                "name": item.name,
+                "category": item.category,
+                "held_out": item.held_out,
+                "kubectl_verified": item.kubectl_verified,
+            }
+            for item in lab.all()
+        ]
+
     # -- health ----------------------------------------------------------
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
@@ -367,7 +380,39 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
 
     @app.get("/ui", response_class=HTMLResponse)
     def ui_index() -> str:
-        return ui.index_page(store.list_diagnoses(), store.stats())
+        return ui.dashboard_page(
+            store.list_diagnoses(25),
+            store.stats(),
+            _scenarios(),
+            store.list_pending_approvals(),
+        )
+
+    @app.get("/scenarios")
+    def scenarios() -> dict[str, Any]:
+        return {"items": _scenarios()}
+
+    @app.post("/ui/diagnose")
+    async def ui_diagnose(request: Request) -> RedirectResponse:
+        """Run one sandbox diagnosis from the console and open its trajectory."""
+        form = _parse_form((await request.body()).decode("utf-8"))
+        scenario_id = form.get("scenario", "").upper()
+        variant = form.get("variant", settings.variant).upper()
+        if scenario_id not in {item["id"] for item in _scenarios()}:
+            raise HTTPException(status_code=422, detail=f"unknown scenario {scenario_id}")
+        if settings.backend == "real":
+            raise HTTPException(
+                status_code=422,
+                detail="the console launcher injects sandbox faults; use POST /diagnose "
+                "with an alert when running against a real cluster",
+            )
+        scenario = FaultLab(cluster, settings.resolve(settings.scenarios_dir)).get(scenario_id)
+        result = _run(
+            scenario.alert,
+            variant,
+            alertname=f"console:{scenario_id}",
+            sandbox_scenario=scenario_id,
+        )
+        return RedirectResponse(f"/ui/diagnoses/{result['diagnosis_id']}", status_code=303)
 
     @app.get("/ui/diagnoses/{diagnosis_id}", response_class=HTMLResponse)
     def ui_detail(diagnosis_id: str) -> HTMLResponse:

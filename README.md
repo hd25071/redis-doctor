@@ -5,6 +5,12 @@ Redis on Kubernetes 的故障诊断 Agent。16 类故障可注入与恢复，每
 
 被诊断对象是 redis-operator 生成的 3 副本主从集群（`ops.example.com/v1alpha1` 的 `Redis` CR）。
 
+控制台（`/ui`）：统计、场景启动器、诊断记录、待审批动作。
+
+![诊断控制台](docs/screenshots/ui-console.png)
+
+轨迹页（`/ui/diagnoses/<id>`）：结论、逐条证据、假设的支持与反驳、审批、完整工具轨迹。
+
 ![诊断轨迹](docs/screenshots/ui-trajectory.png)
 
 ## 特性
@@ -30,7 +36,7 @@ python rdctl.py kb build                # 构建手册索引
 python rdctl.py scenarios list          # 16 类故障
 python rdctl.py demo --scenario S02     # 注入 → 诊断 → 审批 → 验证
 python rdctl.py eval --runs 3           # 消融评测
-python rdctl.py serve --port 8099       # Web UI: http://127.0.0.1:8099/ui
+python rdctl.py serve --port 8099       # 控制台: http://127.0.0.1:8099/ui
 python -m pytest -q                     # 测试
 ```
 
@@ -225,4 +231,3 @@ gitleaks、镜像构建与运行冒烟、trivy 扫描；真实集群 e2e 通过�
 ## License
 
 MIT，见 [LICENSE](LICENSE)。
-
