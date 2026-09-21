@@ -164,6 +164,7 @@ def dashboard_page(
         "</tr>"
         for r in records
     )
+
     def _short(text: str, limit: int = 34) -> str:
         text = text or ""
         return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -371,9 +372,7 @@ def metrics_page(stats: dict[str, Any], prometheus_text: str) -> str:
             f'redis_doctor_approvals_total{{decision="{key}"}} {value}'
             for key, value in sorted(approvals.items())
         ]
-        lines.append(
-            f"redis_doctor_alert_fingerprints_total {stats.get('alert_fingerprints', 0)}"
-        )
+        lines.append(f"redis_doctor_alert_fingerprints_total {stats.get('alert_fingerprints', 0)}")
         prometheus_text = "\n".join(lines) + "\n"
     cards = [
         ("诊断总数", stats.get("diagnoses", 0)),
