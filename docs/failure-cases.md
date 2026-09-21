@@ -29,7 +29,8 @@ A 组 Top-3 为 87.5%：它能在候选之间排序，但没有工具就无法�
 | S14 | 拿到链路 down，没有 `sync_full` 计数，无法与网络阻断区分 | 是（手册提示看 sync_full 与 backlog） |
 | S13 | 慢日志为空，第一轮没有 cfs throttled 指标 | 否（held-out，手册无此类） |
 
-完整失败实录：[demo-failure-trajectory.md](demo-failure-trajectory.md)。
+完整失败实录：[demo-failure-trajectory.md](demo-failure-trajectory.md)，
+演示与截图见 [demo.md](demo.md)。
 
 ## D 组（100%）：证据完整带来的提升
 

@@ -13,6 +13,10 @@ python rdctl.py serve --port 8099        # 轨迹 UI: http://127.0.0.1:8099/ui
 
 无需集群、无需 Docker、无需 API key。
 
+轨迹页（真实运行截图，含证据链与审批状态）：
+
+![诊断轨迹](docs/screenshots/ui-trajectory.png)
+
 ## 结果
 
 ### 真实模型（deepseek-flash，16 场景 × 1 次，合计 $0.32）
