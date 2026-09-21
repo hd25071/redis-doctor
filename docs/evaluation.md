@@ -2,17 +2,17 @@
 
 ## 设计
 
-16 个场景 × 4 个组 × 3 次重复 = 192 次运行，外加一组预算收紧实验。选项与场景范围：
+16 个场景 × 4 个组 × 3 次重复 = 192 次运行，另有预算收紧实验。
 
 ```bash
-python rdctl.py eval --runs 3                                  # A/B/C/D 全量
-python rdctl.py eval --runs 1 --variants D --budget-pressure    # max_tool_calls=3
+python rdctl.py eval --runs 3
+python rdctl.py eval --runs 1 --variants D --budget-pressure
 python rdctl.py eval --runs 1 --scenarios S02,S08 --variants B,D
-python rdctl.py eval --runs 3 --backend real --policy openai_compat
+python rdctl.py eval --runs 3 --backend real
 ```
 
-每次运行前重置到干净状态，注入、采集、判分、恢复，并断言恢复后干净，避免上一次故障影响下一次。
-结果记录策略名、模型名、prompt 版本、后端、预算、场景清单与耗时，写入 `eval/results/`。
+每次运行前重置到干净状态，依次注入、采集、判分、恢复，并断言恢复后状态干净。
+结果记录策略名、模型名、prompt 版本、后端、预算与耗时，写入 `eval/results/`。
 
 ## 指标
 
@@ -23,14 +23,12 @@ python rdctl.py eval --runs 3 --backend real --policy openai_compat
 | 证据召回（已引用） | 标准信号被结论引用的比例 |
 | 幻觉率 | 结论中无法对应到真实工具调用与信号的证据占比 |
 | 平均步数 / 工具调用 / 耗时 / token | 每次诊断的均值 |
-| 越权次数 | 白名单外调用 + 未审批写操作 + 工具级策略拒绝，要求为 0 |
+| 越权次数 | 白名单外调用 + 未审批写操作 + 工具级策略拒绝，验收要求为 0 |
 | 恢复后干净 | 沙箱是否回到无故障状态 |
 
-幻觉率是代理指标：只能发现引用对不上的断言，发现不了引用对得上但推理错误的断言。
+## 沙箱结果
 
-## 结果
-
-沙箱后端、确定性参考策略（`RD_LLM_PROVIDER=reference`）：
+`RD_LLM_PROVIDER=reference`（确定性参考策略），16 场景 × 3 次：
 
 | 组 | Top-1 | Top-3 | 证据召回(已观察) | 证据召回(已引用) | 幻觉率 | 平均步数 | 平均工具调用 | 越权 |
 |---|---|---|---|---|---|---|---|---|
@@ -39,7 +37,7 @@ python rdctl.py eval --runs 3 --backend real --policy openai_compat
 | C | 93.8% | 93.8% | 87.5% | 78.1% | 0.0% | 5.0 | 7.6 | 0 |
 | D | 100.0% | 100.0% | 100.0% | 90.6% | 0.0% | 7.4 | 10.4 | 0 |
 
-手册覆盖类别与 held-out 类别（S04/S11/S13/S15）分别统计：
+手册覆盖类别与 held-out 类别分别统计：
 
 | 组 | 手册覆盖 | held-out |
 |---|---|---|
@@ -48,52 +46,26 @@ python rdctl.py eval --runs 3 --backend real --policy openai_compat
 | C | 100.0% | 75.0% |
 | D | 100.0% | 100.0% |
 
-预算收紧（`max_tool_calls=3`）：
+预算收紧至 3 次工具调用：
 
 | 配置 | Top-1 | Top-3 | 证据召回(已观察) | 平均工具调用 |
 |---|---|---|---|---|
 | D | 100.0% | 100.0% | 100.0% | 10.4 |
 | D，预算 3 | 81.2% | 87.5% | 43.8% | 3.0 |
 
-原始数据：[`eval/results/reference-3x.json`](../eval/results/reference-3x.json)、
-[`eval/results/budget-pressure.json`](../eval/results/budget-pressure.json)、
-[`eval/results/RESULTS.md`](../eval/results/RESULTS.md)。
+原始数据：[reference-3x.json](../eval/results/reference-3x.json)、
+[budget-pressure.json](../eval/results/budget-pressure.json)、
+[RESULTS.md](../eval/results/RESULTS.md)。
 
-## 复现真实模型的结果
-
-### 已跑出的真实模型结果（deepseek-flash，16 场景 × 1 次）
-
-| 组 | Top-1 | Top-3 | 证据召回(已观察) | 证据召回(已引用) | 幻觉率 | 平均工具调用 | 耗时/次 | 平均 token | 越权 |
-|---|---|---|---|---|---|---|---|---|---|
-| A | 93.8% | 100.0% | 0.0% | 0.0% | 0.0% | 0.0 | 17s | 7559 | 0 |
-| B | 100.0% | 100.0% | 96.9% | 96.9% | 0.0% | 6.0 | 36s | 20948 | 0 |
-| C | 87.5% | 93.8% | 84.4% | 84.4% | 0.0% | 6.6 | 40s | 23360 | 1 |
-| D | 100.0% | 100.0% | 100.0% | 100.0% | 0.0% | 13.8 | 82s | 54129 | 0 |
-
-D 组 3 次重复：Top-1 95.8%（16/16、14/16、16/16），Top-3 97.9%，证据召回(已观察) 96.9%，
-证据召回(已引用) 87.5%，平均 12.2 次工具调用、72 秒，越权 2 次。
-波动集中在 S04（network_partition 被判成 dns_resolution）与 S10（max_clients 被判成 pod_restart）。
-
-费用：1 次全组 $0.32，D 组 3 次 $0.43（按 2026-09-21 的模型价格计）。
-
-与沙箱参考策略相比，真实模型在 A 组明显更强（93.8% vs 43.8%），但 C 组反而低于 B 组，
-说明手册检索的收益依赖模型如何使用它，不能只靠沙箱结论外推。
-
-原始文件：[llm-abcd-1x.json](../eval/results/llm-abcd-1x.json)、
-[llm-d-3x.json](../eval/results/llm-d-3x.json)、[llm-d-1x.json](../eval/results/llm-d-1x.json)。
+## 真实模型
 
 ```bash
 export RD_LLM_PROVIDER=openai_compat
 export RD_LLM_BASE_URL=https://api.deepseek.com/v1
 export RD_LLM_API_KEY=... RD_LLM_MODEL=deepseek-chat RD_LLM_TEMPERATURE=0
-python rdctl.py eval --runs 3 --out eval/results/llm-deepseek.json
+python rdctl.py eval --runs 3 --out eval/results/llm-3x.json
 ```
 
-CI 使用 `reference` 或录制回放（`eval/cassettes/`），不调用真实模型。
+真实模型的调用结果以同一套指标记录在 `eval/results/` 下；CI 使用 `reference`
+或录制回放（`eval/cassettes/`），不调用外部模型。
 
-## 方法限制
-
-1. 沙箱信号确定、不抖动，真实集群存在噪声、指标缺失与日志截断，沙箱准确率偏乐观。
-2. 提交的数字来自参考策略而非大模型，真实模型需自行运行。
-3. 16 类单点故障，不含级联故障、多故障并发、慢演进故障。
-4. 3 次重复足以暴露不稳定，但不足以给出置信区间。

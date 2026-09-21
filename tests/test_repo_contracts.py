@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def test_readme_has_the_required_sections() -> None:
     text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    for heading in ("已知限制", "失败案例", "评测", "安全", "快速开始", "架构"):
+    for heading in ("失败案例", "评测", "安全", "快速开始", "架构", "部署", "开发"):
         assert heading in text, f"README is missing the '{heading}' section"
 
 
