@@ -391,6 +391,40 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
     def scenarios() -> dict[str, Any]:
         return {"items": _scenarios()}
 
+    @app.get("/ui/scenarios", response_class=HTMLResponse)
+    def ui_scenarios() -> str:
+        return ui.scenarios_page(_scenarios())
+
+    @app.get("/ui/records", response_class=HTMLResponse)
+    def ui_records() -> str:
+        return ui.records_page(store.list_diagnoses(100))
+
+    @app.get("/ui/metrics", response_class=HTMLResponse)
+    def ui_metrics() -> str:
+        return ui.metrics_page(store.stats(), metrics.render())
+
+    @app.get("/ui/api", response_class=HTMLResponse)
+    def ui_api() -> str:
+        return ui.api_page(
+            [
+                ("GET", "/healthz", "存活探针"),
+                ("GET", "/readyz", "就绪探针，缺索引或未配置 token 时返回 503"),
+                (
+                    "POST",
+                    "/webhook/alertmanager",
+                    "Alertmanager 告警入口，需 Bearer token，按 fingerprint 冷却",
+                ),
+                ("POST", "/diagnose", "按告警文本运行一次诊断（沙箱可带 sandbox_scenario）"),
+                ("GET", "/diagnoses", "诊断记录列表"),
+                ("GET", "/diagnoses/{id}", "单次诊断，含工具轨迹与审批"),
+                ("GET", "/approvals", "待审批动作"),
+                ("POST", "/approvals/{id}", "批准或拒绝一个 L1 动作"),
+                ("GET", "/scenarios", "故障场景清单"),
+                ("GET", "/metrics", "Prometheus 指标"),
+                ("GET", "/openapi.json", "OpenAPI 描述"),
+            ]
+        )
+
     @app.post("/ui/diagnose")
     async def ui_diagnose(request: Request) -> RedirectResponse:
         """Run one sandbox diagnosis from the console and open its trajectory."""

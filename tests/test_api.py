@@ -144,6 +144,22 @@ def test_console_dashboard_and_launcher(client) -> None:
     assert bad.status_code == 422
 
 
+def test_console_pages_render_html(client) -> None:
+    client.post("/diagnose", json={"alert_text": "alert", "sandbox_scenario": "S02"})
+    expectations = {
+        "/ui/scenarios": "故障场景",
+        "/ui/records": "诊断记录",
+        "/ui/metrics": "Prometheus 文本",
+        "/ui/api": "HTTP 接口",
+        "/ui": "运行诊断",
+    }
+    for path, marker in expectations.items():
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert "text/html" in response.headers["content-type"], path
+        assert marker in response.text, path
+
+
 def test_sandbox_scenario_refused_on_real_backend(client) -> None:
     client.app.state.settings.backend = "real"
     response = client.post("/diagnose", json={"alert_text": "x", "sandbox_scenario": "S02"})

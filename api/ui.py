@@ -13,6 +13,7 @@ from typing import Any
 
 STYLE = """
 :root{
+  color-scheme:dark;
   --bg:#0b0e14;--bg2:#0f131b;--panel:rgba(255,255,255,.028);--line:rgba(255,255,255,.09);
   --line-strong:rgba(255,255,255,.16);--fg:#eef2f8;--muted:#8d99ab;--accent:#5b9dff;
   --accent2:#8b7cff;--radius:14px;
@@ -80,9 +81,10 @@ pre{background:rgba(0,0,0,.32);border:1px solid var(--line);border-radius:10px;p
 .bad{background:rgba(255,99,126,.12);color:#ff9db0;border-color:rgba(255,99,126,.3)}
 .warn{background:rgba(255,196,84,.12);color:#ffd58a;border-color:rgba(255,196,84,.3)}
 form.inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-select,input,button{font:inherit;color:var(--fg);background:rgba(255,255,255,.04);
+select,input,button{font:inherit;color:var(--fg);background:#131822;
   border:1px solid var(--line);border-radius:10px;padding:8px 12px;
   transition:border-color .15s,background .15s}
+select option{background:#131822;color:var(--fg)}
 select:hover,input:hover{border-color:var(--line-strong)}
 select:focus,input:focus,button:focus{outline:none;border-color:var(--accent);
   box-shadow:0 0 0 3px rgba(91,157,255,.2)}
@@ -109,8 +111,8 @@ def layout(title: str, body: str) -> str:
         "<header><span class='brand'><span class='mark'></span>"
         "<a href='/ui' style='color:inherit'>redis-doctor</a></span>"
         "<nav><a href='/ui'>控制台</a><a href='/ui/approvals'>审批</a>"
-        "<a href='/scenarios'>场景</a><a href='/diagnoses'>记录 API</a>"
-        "<a href='/metrics'>指标</a><a href='/docs'>OpenAPI</a></nav>"
+        "<a href='/ui/scenarios'>场景</a><a href='/ui/records'>记录</a>"
+        "<a href='/ui/metrics'>指标</a><a href='/ui/api'>接口</a></nav>"
         "<span class='spacer'></span><small>Redis on Kubernetes 诊断</small>"
         "</header><main>" + body + "</main></body></html>"
     )
@@ -213,11 +215,10 @@ def dashboard_page(
         )
         + "</table>",
         "<h3>接口</h3>",
-        "<table><tr><td><a href='/scenarios'>/scenarios</a></td><td>场景清单</td></tr>"
-        "<tr><td><a href='/diagnoses'>/diagnoses</a></td><td>诊断记录（JSON）</td></tr>"
-        "<tr><td><a href='/approvals'>/approvals</a></td><td>审批队列（JSON）</td></tr>"
-        "<tr><td><a href='/metrics'>/metrics</a></td><td>Prometheus 指标</td></tr>"
-        "<tr><td><a href='/docs'>/docs</a></td><td>OpenAPI</td></tr></table>",
+        "<table><tr><td><a href='/ui/scenarios'>场景</a></td><td>16 类故障清单</td></tr>"
+        "<tr><td><a href='/ui/records'>记录</a></td><td>诊断记录与轨迹</td></tr>"
+        "<tr><td><a href='/ui/metrics'>指标</a></td><td>运行指标与 Prometheus 文本</td></tr>"
+        "<tr><td><a href='/ui/api'>接口</a></td><td>HTTP 接口一览</td></tr></table>",
         "</div></div></div>",
     ]
     return layout("控制台", "".join(body))
@@ -306,3 +307,91 @@ def approvals_page(pending: list[dict[str, Any]]) -> str:
         + "</table>"
     )
     return layout("审批", body)
+
+
+def scenarios_page(scenarios: list[dict[str, Any]]) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td><code>{_esc(s['id'])}</code></td>"
+        f"<td>{_esc(s['name'])}</td>"
+        f"<td><span class='pill'>{_esc(s['category'])}</span></td>"
+        f"<td>{'<span class="pill warn">held-out</span>' if s['held_out'] else ''}</td>"
+        f"<td>{'是' if s['kubectl_verified'] else '否'}</td>"
+        "</tr>"
+        for s in scenarios
+    )
+    body = (
+        "<h2>故障场景</h2>"
+        "<p class='lead'>每个场景在 faultlab/scenarios 下声明注入、恢复、告警文本、标准根因与"
+        "必须观察到的证据信号；held-out 表示该类别未写入手册。</p>"
+        "<div class='panel'><table><tr><th>#</th><th>故障</th><th>类别</th>"
+        "<th></th><th>真机注入已验证</th></tr>" + rows + "</table></div>"
+        "<p class='muted'>机器可读版本：<code>GET /scenarios</code></p>"
+    )
+    return layout("场景", body)
+
+
+def records_page(records: list[dict[str, Any]]) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td><a href='/ui/diagnoses/{_esc(r['id'])}'><code>{_esc(r['id'])}</code></a></td>"
+        f"<td>{_esc(r.get('root_cause') or '-')}</td>"
+        f"<td>{_esc(r.get('confidence'))}</td>"
+        f"<td>{_status_pill(r.get('status', ''))}</td>"
+        f"<td>{_esc(r.get('variant'))}</td>"
+        f"<td><small>{_esc((r.get('alert') or '').splitlines()[0])}</small></td>"
+        "</tr>"
+        for r in records
+    )
+    body = (
+        "<h2>诊断记录</h2>"
+        "<div class='panel'><table><tr><th>ID</th><th>根因</th><th>置信度</th><th>状态</th>"
+        "<th>组</th><th>告警</th></tr>"
+        + (rows or "<tr><td colspan='6' class='muted'>还没有诊断记录</td></tr>")
+        + "</table></div>"
+        "<p class='muted'>机器可读版本：<code>GET /diagnoses</code>，单条："
+        "<code>GET /diagnoses/{id}</code></p>"
+    )
+    return layout("记录", body)
+
+
+def metrics_page(stats: dict[str, Any], prometheus_text: str) -> str:
+    approvals = stats.get("approvals", {}) or {}
+    cards = [
+        ("诊断总数", stats.get("diagnoses", 0)),
+        ("待审批", approvals.get("pending", 0)),
+        ("已批准", approvals.get("approved", 0)),
+        ("已拒绝", approvals.get("denied", 0)),
+        ("告警指纹", stats.get("alert_fingerprints", 0)),
+        ("告警事件", stats.get("alert_events", 0)),
+    ]
+    body = (
+        "<h2>运行指标</h2>"
+        "<div class='cards'>"
+        + "".join(
+            f"<div class='card'><div class='v'>{_esc(v)}</div><div class='k'>{_esc(k)}</div></div>"
+            for k, v in cards
+        )
+        + "</div>"
+        "<div class='panel'><h3>Prometheus 文本</h3>"
+        f"<pre>{_esc(prometheus_text)}</pre></div>"
+        "<p class='muted'>采集地址：<code>GET /metrics</code></p>"
+    )
+    return layout("指标", body)
+
+
+def api_page(rows: list[tuple[str, str, str]]) -> str:
+    table = "".join(
+        f"<tr><td><span class='pill'>{_esc(method)}</span></td><td><code>{_esc(path)}</code></td>"
+        f"<td>{_esc(desc)}</td></tr>"
+        for method, path, desc in rows
+    )
+    body = (
+        "<h2>HTTP 接口</h2>"
+        "<div class='panel'><table><tr><th>方法</th><th>路径</th><th>说明</th></tr>"
+        + table
+        + "</table></div>"
+        "<p class='muted'>OpenAPI 描述：<code>GET /openapi.json</code>"
+        "（内置浏览器无法渲染 Swagger UI，故以本页代替）</p>"
+    )
+    return layout("接口", body)
