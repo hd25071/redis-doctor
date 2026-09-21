@@ -48,10 +48,25 @@ A 组 Top-3 为 87.5%：它能在候选之间排序，但没有工具就无法�
 
 ## 真实集群上的新失败形态
 
+## 真实模型（deepseek-flash）的失败样本
+
+| 组 | 场景 | 标准答案 | 预测 | 类型 |
+|---|---|---|---|---|
+| A | S10 | max_clients | pod_restart | 告警里"新连接被拒"被读成重启 |
+| C | S01 | pod_restart | storage_provision | 手册检索把候选引偏 |
+| C | S04 | network_partition | dns_resolution | 两个类别共享"链路 down"这一个症状 |
+| D 第 2 次 | S04 | network_partition | dns_resolution | 同上 |
+| D 第 2 次 | S10 | max_clients | pod_restart | 同上 |
+
+越权调用：C 组 S08 一次、D 组 3 次重复中 2 次，均被工具层拒绝并计入审计，
+`rdctl eval` 因此以退出码 2 结束。
+
+引用质量：加了引用校验重试后，D 组 3 次重复的幻觉率仍为 0，但"已引用"召回为 87.5%，
+说明模型会漏引部分已观察到的信号，而不是编造引用。
+
 沙箱里不会出现、真机上出现过的两类（详见 [real-cluster.md](real-cluster.md)）：
 
 - **陈旧事件**：已恢复的 ImagePullBackOff 事件在 1 小时内仍然存在，导致后续诊断误判。
   已通过事件年龄过滤修复。
 - **前序故障残留**：连续注入多个故障时，前一个故障的残余证据会污染后一个诊断。
   评测脚本已加入场景前健康检查与事件清理。
-
