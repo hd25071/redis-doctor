@@ -96,10 +96,25 @@ def test_l1_action_maps_to_a_structured_call() -> None:
     action = SuggestedAction(
         action="重建 Pod",
         tier="write_l1",
+        verb="delete_pod",
+        target_kind="pod",
+        target_name="redis-demo-0",
+        namespace="demo",
         command="kubectl delete pod redis-demo-0 -n demo",
         risk="medium",
     )
     assert plan_write_call(action) == ("k8s_delete_pod", {"pod": "redis-demo-0"})
+
+
+def test_text_only_action_is_not_executable() -> None:
+    """Prose (or a crafted command string) must never reach the actuator."""
+    action = SuggestedAction(
+        action="删掉主节点",
+        tier="write_l1",
+        command="kubectl delete pod redis-demo-0 -n demo",
+        risk="medium",
+    )
+    assert plan_write_call(action) is None
 
 
 def test_standalone_actuator_reverifies(lab, ctx, settings) -> None:

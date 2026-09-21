@@ -730,12 +730,23 @@ class ReferenceReasoner:
     def _actions(category: str) -> list[SuggestedAction]:
         out = []
         for action, tier, risk, command in ACTIONS.get(category, []):
+            # Structured target: only delete-pod style L1 actions are
+            # executable, and they must be expressed as verb + object, not as a
+            # shell string the actuator would have to parse.
+            verb, kind, name, namespace = "", "", "", ""
+            match = re.search(r"\bkubectl delete pod ([a-z0-9][a-z0-9.-]*) -n (\w+)", command)
+            if match and tier == "write_l1":
+                verb, kind, name, namespace = "delete_pod", "pod", match.group(1), match.group(2)
             out.append(
                 SuggestedAction(
                     action=action,
                     tier=tier,  # type: ignore[arg-type]
                     risk=risk,  # type: ignore[arg-type]
-                    target="demo",
+                    target=name or "demo",
+                    verb=verb,
+                    target_kind=kind,
+                    target_name=name,
+                    namespace=namespace,
                     command=command,
                     rationale="按根因类别给出的处置建议；写操作需人工审批",
                 )

@@ -236,6 +236,40 @@ class Store:
         item["action"] = json.loads(item.pop("action_json"))
         return item
 
+    def claim_approval(self, approval_id: str) -> bool:
+        """Atomically move pending -> executing.
+
+        Returns False when the row was not pending, which is what stops two
+        concurrent approvals from executing the same action twice.
+        """
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE approvals SET status = 'executing' WHERE id = ? AND status = 'pending'",
+                (approval_id,),
+            )
+        return cursor.rowcount == 1
+
+    def finish_approval(
+        self,
+        approval_id: str,
+        status: str,
+        decided_by: str,
+        note: str = "",
+        result: dict[str, Any] | None = None,
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE approvals SET status = ?, decided_at = ?, decided_by = ?, note = ? "
+                "WHERE id = ?",
+                (
+                    status,
+                    time.time(),
+                    decided_by,
+                    json.dumps(result or {}, ensure_ascii=False) if result else note,
+                    approval_id,
+                ),
+            )
+
     def list_approvals(self, diagnosis_id: str) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             "SELECT * FROM approvals WHERE diagnosis_id = ? ORDER BY requested_at",

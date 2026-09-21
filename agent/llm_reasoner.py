@@ -31,6 +31,14 @@ from agent.state import (
 from agent.variants import Variant
 
 
+def _confidence(value: Any) -> float:
+    """Never let a malformed number from the model crash a diagnosis."""
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.3
+
+
 class LLMReasoner:
     is_llm = True
 
@@ -56,6 +64,10 @@ class LLMReasoner:
         state.cost_usd = round(state.cost_usd + response.cost_usd, 6)
         if expect_json and response.parsed is None:
             self._record_unparsed(user, response)
+            # A parse failure must not look like a confident answer: the report
+            # step falls back to ``unresolved`` and this counter feeds the
+            # evaluation so failures are visible instead of being scored.
+            state.notes = "json_parse_failure"
         return response.parsed
 
     @staticmethod
@@ -279,9 +291,9 @@ class LLMReasoner:
             )
         return (
             DiagnosisReport(
-                root_cause=str(parsed.get("root_cause", "pod_restart")),
+                root_cause=str(parsed.get("root_cause", "unresolved")),
                 summary=str(parsed.get("summary", "")),
-                confidence=float(parsed.get("confidence", 0.3)),
+                confidence=_confidence(parsed.get("confidence")),
                 evidence=evidence,
                 ruled_out=ruled_out,
                 suggested_actions=actions,

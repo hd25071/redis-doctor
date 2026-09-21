@@ -19,7 +19,9 @@ def client(tmp_path, monkeypatch):
     # Keep the API tests independent of a developer's local .env: they must not
     # start calling a real model endpoint.
     settings.llm_provider = "reference"
-    return TestClient(create_app(settings))
+    # Every mutating call is authenticated; the client carries the token so the
+    # tests exercise the same path a caller would use.
+    return TestClient(create_app(settings), headers={"Authorization": "Bearer test-token"})
 
 
 def test_health_and_ready(client) -> None:
@@ -28,14 +30,25 @@ def test_health_and_ready(client) -> None:
 
 
 def test_webhook_requires_a_token(client) -> None:
-    assert client.post("/webhook/alertmanager", json={"alerts": []}).status_code == 401
+    anonymous = TestClient(client.app)
+    assert anonymous.post("/webhook/alertmanager", json={"alerts": []}).status_code == 401
     assert (
-        client.post(
+        anonymous.post(
             "/webhook/alertmanager",
             headers={"Authorization": "Bearer wrong"},
             json={"alerts": []},
         ).status_code
         == 401
+    )
+
+
+def test_mutating_endpoints_require_a_token(client) -> None:
+    """Fail-closed: no token, no diagnosis, no approval decision."""
+    anonymous = TestClient(client.app)
+    assert anonymous.post("/diagnose", json={"alert_text": "x"}).status_code == 401
+    assert anonymous.post("/approvals/anything", json={"decision": "approve"}).status_code == 401
+    assert (
+        anonymous.post("/ui/diagnose", data={"scenario": "S02", "variant": "D"}).status_code == 401
     )
 
 
@@ -84,7 +97,7 @@ def test_sandbox_scenario_diagnosis_and_approval_flow(client) -> None:
         f"/approvals/{pending[0]['id']}",
         json={"decision": "approve", "decided_by": "pytest"},
     ).json()
-    assert decided["status"] == "approved"
+    assert decided["status"] == "executed"
     assert decided["executed"] is True
     assert decided["target"] == "redis-demo-0"
     assert client.get("/approvals").json()["pending"] == []

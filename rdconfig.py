@@ -14,11 +14,26 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent
 
 
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off", ""}
+
+
 def _bool(name: str, default: bool) -> bool:
+    """Strict boolean parsing: an unrecognised value is an error, not False.
+
+    Safety switches go through this helper, so a typo such as
+    ``RD_APPROVAL_REQUIRED=enabled`` fails loudly instead of silently
+    disabling the approval gate.
+    """
     raw = os.environ.get(name)
     if raw is None:
         return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    value = raw.strip().lower()
+    if value in _TRUE:
+        return True
+    if value in _FALSE:
+        return False
+    raise ValueError(f"{name}={raw!r} is not a boolean; use 1/0, true/false, yes/no, on/off")
 
 
 def _int(name: str, default: int) -> int:
@@ -77,6 +92,7 @@ class Settings:
     redis_port_forward_base: int = 0
     # api
     webhook_token: str = ""
+    api_token: str = ""
     alert_cooldown_seconds: int = 900
     data_dir: str = "data"
     # paths
@@ -109,6 +125,7 @@ class Settings:
             redis_acl_password=os.environ.get("RD_REDIS_ACL_PASSWORD", ""),
             redis_port_forward_base=_int("RD_REDIS_PORT_FORWARD_BASE", 0),
             webhook_token=os.environ.get("RD_WEBHOOK_TOKEN", ""),
+            api_token=os.environ.get("RD_API_TOKEN", ""),
             alert_cooldown_seconds=_int("RD_ALERT_COOLDOWN_SECONDS", 900),
             data_dir=os.environ.get("RD_DATA_DIR", "data"),
             kb_index=os.environ.get("RD_KB_INDEX", "knowledge/index/index.json"),
@@ -123,7 +140,7 @@ class Settings:
     def redacted(self) -> dict[str, str]:
         out = {}
         for key, value in self.__dict__.items():
-            if any(word in key for word in ("key", "password", "token")) and value:
+            if key.endswith(("_key", "_password", "_token")) and value:
                 out[key] = "<redacted>"
             else:
                 out[key] = value

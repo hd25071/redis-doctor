@@ -19,6 +19,7 @@ data/
 
 # Generated artefacts that are cheap to rebuild
 eval/results/*.tmp.json
+eval/results/llm-raw.jsonl
 
 # Cluster credentials exported while verifying (never commit a kubeconfig)
 k3s.yaml

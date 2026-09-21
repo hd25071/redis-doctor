@@ -24,36 +24,55 @@ REDIS_ALLOWED_COMMANDS: dict[str, set[str] | None] = {
     "CLIENT": {"LIST", "INFO"},
 }
 
-#: Explicit deny list. Checked first, and checked against the *whole* command
-#: string, so a denied verb cannot hide behind a compound command line.
-REDIS_DENIED_PATTERNS: tuple[str, ...] = (
-    r"\bFLUSHALL\b",
-    r"\bFLUSHDB\b",
-    r"\bCONFIG\s+SET\b",
-    r"\bCONFIG\s+REWRITE\b",
-    r"\bCONFIG\s+RESETSTAT\b",
-    r"\bKEYS\b",
-    r"\bSCAN\b(?!\s)",
-    r"\bDEBUG\b",
-    r"\bSHUTDOWN\b",
-    r"\bSLAVEOF\b",
-    r"\bREPLICAOF\b",
-    r"\bEVAL\b",
-    r"\bEVALSHA\b",
-    r"\bSCRIPT\b",
-    r"\bMONITOR\b",
-    r"\bCLIENT\s+KILL\b",
-    r"\bCLIENT\s+SETNAME\b",
-    r"\bMIGRATE\b",
-    r"\bRESTORE\b",
-    r"\bSAVE\b",
-    r"\bBGREWRITEAOF\b",
-    r"\bMODULE\b",
-    r"\bACL\s+SETUSER\b",
-    r"\bXADD\b",
-    r"\bSET\b(?!\s+(GET|RANGE))",
-    r"\bDEL\b",
-    r"\bEXPIRE\b",
+#: Commands the agent may never send, whatever the surrounding text looks like.
+#: Validation is token-based (see :func:`check_redis_command`); this list only
+#: exists to produce a clearer refusal reason and to document the intent.
+REDIS_DENIED_COMMANDS: frozenset[str] = frozenset(
+    {
+        "FLUSHALL",
+        "FLUSHDB",
+        "KEYS",
+        "SCAN",
+        "DEBUG",
+        "SHUTDOWN",
+        "SLAVEOF",
+        "REPLICAOF",
+        "EVAL",
+        "EVALSHA",
+        "SCRIPT",
+        "MONITOR",
+        "MIGRATE",
+        "RESTORE",
+        "SAVE",
+        "BGSAVE",
+        "BGREWRITEAOF",
+        "MODULE",
+        "ACL",
+        "SET",
+        "DEL",
+        "EXPIRE",
+        "RENAME",
+        "MOVE",
+        "XADD",
+        "SUBSCRIBE",
+        "PSUBSCRIBE",
+    }
+)
+
+#: CONFIG GET may only read operational parameters. Secrets live behind
+#: ``requirepass`` / ``masterauth`` and authentication is parameter-level, so the
+#: ACL user cannot stop it — the client must.
+CONFIG_GET_ALLOWED = re.compile(
+    r"(maxmemory(-policy)?|maxclients|timeout|tcp-keepalive|appendonly|appendfsync|"
+    r"save|dir|stop-writes-on-bgsave-error|repl-[a-z-]+|min-replicas-[a-z-]+|"
+    r"slowlog-[a-z-]+|lazyfree-[a-z-]+|hz)",
+    re.IGNORECASE,
+)
+
+#: Parameter names that must never be readable, even though they are not a
+#: separate command: they carry the password itself.
+CONFIG_GET_FORBIDDEN = re.compile(
+    r"(requirepass|masterauth|aclfile|user|rename-command|\*)", re.IGNORECASE
 )
 
 
@@ -63,6 +82,15 @@ class CommandDecision:
     command: str
     reason: str = ""
     rule: str = ""
+
+
+def _tokens(command: str) -> list[str]:
+    import shlex
+
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
 
 
 def check_redis_command(command: str) -> CommandDecision:
@@ -75,18 +103,55 @@ def check_redis_command(command: str) -> CommandDecision:
     >>> check_redis_command("FLUSHALL").allowed
     False
     """
-    normalised = " ".join(command.strip().split())
-    if not normalised:
+    parts = _tokens(command)
+    normalised = " ".join(parts)
+    if not parts:
         return CommandDecision(False, normalised, "empty command", "empty")
 
-    for pattern in REDIS_DENIED_PATTERNS:
-        if re.search(pattern, normalised, flags=re.IGNORECASE):
-            return CommandDecision(False, normalised, f"denied pattern {pattern}", "denylist")
-
-    parts = normalised.split()
     verb = parts[0].upper()
+    if len(parts) > 1:
+        two_word = f"{verb} {parts[1].upper()}"
+        if two_word in {
+            "CONFIG SET",
+            "CONFIG REWRITE",
+            "CONFIG RESETSTAT",
+            "CLIENT KILL",
+            "CLIENT SETNAME",
+            "ACL SETUSER",
+        }:
+            return CommandDecision(False, normalised, f"denied command {two_word}", "denylist")
+    if verb in REDIS_DENIED_COMMANDS:
+        return CommandDecision(False, normalised, f"denied command {verb}", "denylist")
     if verb not in REDIS_ALLOWED_COMMANDS:
         return CommandDecision(False, normalised, f"command {verb} not whitelisted", "whitelist")
+
+    # Arity check: without it "INFO replication FLUSHALL" would tokenise into a
+    # whitelisted verb plus a denied one sitting in the argument list.
+    max_args = {"INFO": 2, "ROLE": 1, "DBSIZE": 1, "SLOWLOG": 3, "CLIENT": 2, "CONFIG": 3}
+    if len(parts) > max_args.get(verb, 1):
+        return CommandDecision(False, normalised, f"too many arguments for {verb}", "arity")
+
+    if verb == "CONFIG":
+        if len(parts) != 3 or parts[1].upper() != "GET":
+            return CommandDecision(
+                False, normalised, "only CONFIG GET <param> is allowed", "subcommand"
+            )
+        param = parts[2]
+        if CONFIG_GET_FORBIDDEN.search(param):
+            return CommandDecision(
+                False,
+                normalised,
+                f"CONFIG GET {param} reads authentication material",
+                "config-param",
+            )
+        if not CONFIG_GET_ALLOWED.fullmatch(param):
+            return CommandDecision(
+                False,
+                normalised,
+                f"CONFIG GET {param} not in the parameter whitelist",
+                "config-param",
+            )
+        return CommandDecision(True, normalised, "allowed", "config-param")
 
     subcommands = REDIS_ALLOWED_COMMANDS[verb]
     if subcommands is not None and (len(parts) < 2 or parts[1].upper() not in subcommands):
@@ -112,7 +177,10 @@ REDIS_READONLY_ACL = (
 # ---------------------------------------------------------------------------
 
 _REDACTION_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?i)\b(requirepass|masterauth)\s+\S+"), r"\1 <redacted>"),
+    # requirepass/masterauth with any separator, and the redis-cli "key then
+    # value on the next line" shape.
+    (re.compile(r"(?i)\b(requirepass|masterauth)\b\s*[=:\s]\s*\"?(\S+)"), r"\1 <redacted>"),
+    (re.compile(r"(?im)^(requirepass|masterauth)\s*\n\s*\S+"), r"\1\n<redacted>"),
     # Password phrases inside log lines, e.g. "AUTH with password abc123 failed".
     (
         re.compile(r"(?i)\b(password|passwd|pwd)\b[=:\s]+[\"']?([^\s\"',;]{6,})"),
@@ -176,7 +244,28 @@ class Sanitizer:
         return out, touched
 
 
-SANITIZER = Sanitizer.from_env()
+class _LazySanitizer(Sanitizer):
+    """Reads the environment on each use.
+
+    The module-level ``.env`` load happens in ``rdconfig`` when settings are
+    built, which is after this module is imported: an eagerly built sanitizer
+    would therefore miss every key that comes from ``.env`` — exactly the path
+    the quick-start uses.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def _refresh(self) -> None:
+        fresh = Sanitizer.from_env()
+        self.extra_secrets = tuple(set(self.extra_secrets) | set(fresh.extra_secrets))
+
+    def redact(self, text: str) -> tuple[str, bool]:
+        self._refresh()
+        return super().redact(text)
+
+
+SANITIZER = _LazySanitizer()
 
 
 # ---------------------------------------------------------------------------

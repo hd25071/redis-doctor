@@ -102,6 +102,12 @@ class SuggestedAction(BaseModel):
     action: str
     tier: Literal["read", "write_l1", "write_l2"] = "read"
     target: str = ""
+    #: Structured target for executable actions: the executor never parses
+    #: prose or shell text out of ``command``.
+    verb: str = ""
+    target_kind: str = ""
+    target_name: str = ""
+    namespace: str = ""
     risk: Literal["low", "medium", "high"] = "low"
     command: str = ""
     rationale: str = ""

@@ -295,15 +295,18 @@ class DiagnosisGraph:
 def plan_write_call(action: SuggestedAction) -> tuple[str, dict[str, Any]] | None:
     """Map a suggested action to an actuator call, or ``None`` when advisory.
 
-    The mapping is structural (tool + object name), never free text: the model
-    cannot smuggle a command through the approval gate.
+    Only the structured fields are used (verb + target kind + name). Prose or
+    shell text from the model is never parsed, so a crafted ``command`` string
+    cannot redirect the actuator.
     """
     if action.tier != "write_l1":
         return None
-    match = re.search(POD_IN_COMMAND, action.command or "")
-    if "delete pod" in (action.command or "") and match:
-        return "k8s_delete_pod", {"pod": match.group(0)}
-    return None
+    if action.verb != "delete_pod" or action.target_kind != "pod":
+        return None
+    name = action.target_name.strip()
+    if not name or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,62}", name):
+        return None
+    return "k8s_delete_pod", {"pod": name}
 
 
 def execute_approved_action(

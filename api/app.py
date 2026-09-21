@@ -24,7 +24,7 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
 import rdconfig
-from agent.graph import DiagnosisGraph, execute_approved_action
+from agent.graph import DiagnosisGraph, execute_approved_action, plan_write_call
 from agent.llm import build_llm
 from agent.reference import ReferenceReasoner
 from agent.state import SuggestedAction
@@ -102,6 +102,22 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
             }
             for item in lab.all()
         ]
+
+    def _require_auth(authorization: str | None) -> str:
+        """Authenticate a mutating call; return the identity for the audit log.
+
+        Fail-closed: with no configured token the call is refused, so a
+        deployment that forgot to set one is not silently open.
+        """
+        configured = settings.api_token or settings.webhook_token
+        if not security.token_ok(authorization, configured):
+            detail = (
+                "no API token configured; set RD_API_TOKEN (or RD_WEBHOOK_TOKEN)"
+                if not configured
+                else "invalid or missing bearer token"
+            )
+            raise HTTPException(status_code=401, detail=detail)
+        return "api-token"
 
     # -- health ----------------------------------------------------------
     @app.get("/healthz")
@@ -264,27 +280,27 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
 
     @app.post("/diagnose")
     async def diagnose(
-        request: Request, x_redis_doctor_token: str | None = Header(default=None)
+        request: Request, authorization: str | None = Header(default=None)
     ) -> JSONResponse:
+        _require_auth(authorization)
         body = await request.json()
         alert_text = body.get("alert_text") or body.get("alert")
         if not alert_text:
             raise HTTPException(status_code=422, detail="alert_text is required")
-        if body.get("require_token") and not security.token_ok(
-            x_redis_doctor_token, settings.webhook_token
-        ):
-            raise HTTPException(status_code=401, detail="invalid token")
         if body.get("sandbox_scenario") and settings.backend == "real":
             raise HTTPException(
                 status_code=422,
                 detail="sandbox_scenario is only available with RD_BACKEND=sandbox; "
                 "a real cluster must be diagnosed in its own injected state",
             )
+        # auto_approve writes audit rows claiming a human approved an action, so
+        # it is restricted to the sandbox and never enabled by the caller alone.
+        auto_approve = bool(body.get("auto_approve")) and settings.backend == "sandbox"
         return JSONResponse(
             _run(
                 alert_text,
                 body.get("variant", settings.variant),
-                auto_approve=bool(body.get("auto_approve")),
+                auto_approve=auto_approve,
                 sandbox_scenario=body.get("sandbox_scenario"),
             )
         )
@@ -312,42 +328,50 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
         if approval["status"] != "pending":
             raise HTTPException(status_code=409, detail=f"already {approval['status']}")
         approve = decision.lower() in {"approve", "approved", "yes", "true"}
-        store.save_approval(
-            approval_id,
-            approval["diagnosis_id"],
-            approval["action"],
-            status="approved" if approve else "denied",
-            decided_by=decided_by,
-            note=note,
-        )
-        metrics.inc(
-            "redis_doctor_approvals_total",
-            1,
-            decision="approved" if approve else "denied",
-        )
+        # Claim atomically: a second concurrent request loses the race and gets
+        # 409 instead of executing the same action twice.
+        if not store.claim_approval(approval_id):
+            raise HTTPException(status_code=409, detail="approval is already being processed")
+        metrics.inc("redis_doctor_approvals_total", 1, decision="approved" if approve else "denied")
         if not approve:
+            store.finish_approval(approval_id, "denied", decided_by, note)
             return {"approval_id": approval_id, "status": "denied", "executed": False}
         action = SuggestedAction(**approval["action"])
         if action.tier != "write_l1":
+            store.finish_approval(approval_id, "approved", decided_by, note)
             return {
                 "approval_id": approval_id,
                 "status": "approved",
                 "executed": False,
                 "detail": f"tier {action.tier} is advisory in this MVP; nothing executed",
             }
-        from agent.graph import POD_IN_COMMAND
-
-        match = POD_IN_COMMAND.search(action.command or "")
-        if match is None:
-            raise HTTPException(
-                status_code=422, detail="approved action has no resolvable pod target"
+        call = plan_write_call(action)
+        if call is None:
+            store.finish_approval(
+                approval_id, "failed", decided_by, "action is not executable (no structured target)"
             )
-        pod = match.group(0)
-        ctx = ToolContext(settings=settings)
-        outcome = execute_approved_action(ctx, pod, settings)
+            raise HTTPException(
+                status_code=422,
+                detail="approved action carries no structured target; refusing to execute",
+            )
+        _, args = call
+        pod = args["pod"]
+        # Re-check preconditions at execution time: the pod may no longer exist,
+        # and the diagnosis may be hours old.
+        ctx = ToolContext(settings=settings, cluster=cluster)
+        pods = ctx.build_registry(include_kb=False).call("k8s_get_pods")
+        if not any(p.get("name") == pod for p in (pods.data or [])):
+            store.finish_approval(approval_id, "failed", decided_by, f"{pod} no longer exists")
+            raise HTTPException(status_code=409, detail=f"{pod} no longer exists")
+        try:
+            outcome = execute_approved_action(ctx, pod, settings)
+        except Exception as exc:
+            store.finish_approval(approval_id, "failed", decided_by, f"{type(exc).__name__}: {exc}")
+            raise HTTPException(status_code=502, detail=f"execution failed: {exc}") from exc
+        store.finish_approval(approval_id, "executed", decided_by, note, result=outcome)
         return {
             "approval_id": approval_id,
-            "status": "approved",
+            "status": "executed",
             "executed": True,
             "target": pod,
             "ok": outcome["ok"],
@@ -357,16 +381,17 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
 
     @app.post("/approvals/{approval_id}")
     async def decide(approval_id: str, request: Request) -> JSONResponse:
+        identity = _require_auth(request.headers.get("authorization"))
         content_type = request.headers.get("content-type", "")
         if "application/json" in content_type:
             body = await request.json()
             decision = str(body.get("decision", "deny"))
-            decided_by = str(body.get("decided_by", "api"))
+            decided_by = str(body.get("decided_by", identity))
             note = str(body.get("note", ""))
         else:
             form = _parse_form((await request.body()).decode("utf-8"))
             decision = form.get("decision", "deny")
-            decided_by = form.get("decided_by", "ui")
+            decided_by = form.get("decided_by", identity)
             note = form.get("note", "")
         result = _decide(approval_id, decision, decided_by, note)
         if "application/json" in content_type:
@@ -428,6 +453,7 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
     @app.post("/ui/diagnose")
     async def ui_diagnose(request: Request) -> RedirectResponse:
         """Run one sandbox diagnosis from the console and open its trajectory."""
+        _require_auth(request.headers.get("authorization") or request.cookies.get("rd_token"))
         form = _parse_form((await request.body()).decode("utf-8"))
         scenario_id = form.get("scenario", "").upper()
         variant = form.get("variant", settings.variant).upper()
@@ -461,6 +487,7 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
 
     @app.post("/ui/approvals/{approval_id}")
     async def ui_decide(approval_id: str, request: Request) -> RedirectResponse:
+        _require_auth(request.headers.get("authorization") or request.cookies.get("rd_token"))
         form = _parse_form((await request.body()).decode("utf-8"))
         decision = form.get("decision", "deny")
         _decide(approval_id, decision, decided_by="ui", note="")
