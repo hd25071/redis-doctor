@@ -53,7 +53,9 @@ docker compose -f deploy/compose/docker-compose.sandbox.yml up -d
 
 ## 结果
 
-沙箱后端 16 场景 × 4 组 × 3 次重复，共 192 次运行（`python rdctl.py eval --runs 3`）：
+下表为**参考策略基线**：`RD_LLM_PROVIDER=reference`（确定性策略）在沙箱后端跑 16 场景 × 4 组
+× 3 次重复。确定性策略下重复运行结果一致，因此有效样本是每组 16 个场景；真实模型用同一
+harness 复现，方法见 [docs/evaluation.md](docs/evaluation.md)。
 
 | 组 | 根因 Top-1 | 根因 Top-3 | 证据召回(已观察) | 证据召回(已引用) | 幻觉率 | 平均工具调用 | 越权次数 |
 |---|---|---|---|---|---|---|---|
@@ -142,8 +144,10 @@ rdctl / REST API   ───┼─▶ FastAPI ──▶ triage → plan → coll
 | 指标 | 定义 |
 |---|---|
 | 根因 Top-1 / Top-3 | 结论类别等于 / 命中标准类别（结论 + 按置信度排序的假设前 3） |
+| grounded Top-1 | 结论正确**且**必需信号全部被引用，"答对且有理有据" |
 | 证据召回（已观察 / 已引用） | 标准信号被工具观察 / 被结论引用的比例 |
 | 幻觉率 | 结论中无法对应到真实工具调用与信号的证据占比 |
+| 结论无证据占比 | 结论中一条证据都没有的运行占比（幻觉率在无引用时定义为 0，需配合看） |
 | 越权次数 | 白名单外调用 + 未审批写操作 + 工具级策略拒绝，验收要求为 0 |
 
 故障清单：
@@ -188,6 +192,16 @@ rdctl / REST API   ───┼─▶ FastAPI ──▶ triage → plan → coll
 | 身份层 | `doctor-reader`：pods、pods/log、events、services、endpoints、pvc、statefulsets 只读，无 Secret、无 `pods/exec`、无写动词；`doctor-actuator`：仅 `delete pods` | `deploy/base/rbac.yaml` |
 | 服务端层 | Redis 只读 ACL 用户 `doctor`：`-@all` 加白名单子命令 | `deploy/redis/acl-init-job.yaml` |
 | 客户端层 | 命令白名单、输出脱敏、超长截断、步数/调用数/时间预算 | `tools/safety.py`、`tools/base.py` |
+
+接口认证：`POST /diagnose`、`POST /approvals/{id}`、`/ui/diagnose`、`/ui/approvals/{id}`
+以及 Alertmanager webhook 都要求 `Authorization: Bearer <RD_API_TOKEN 或 RD_WEBHOOK_TOKEN>`；
+未配置 token 时拒绝执行（fail-closed），审批人身份取自调用方并写入审批记录。
+
+执行路径：结论中的写操作以结构化字段（`verb` / `target_kind` / `target_name`）保存，
+执行层不解析模型生成的自然语言或命令行文本；审批状态为
+`pending → executing → executed/failed`，用条件更新原子领取，执行前重新确认目标 Pod 仍存在。
+Redis 侧 `CONFIG GET` 只允许运维参数（`maxmemory*`、`repl-*`、`save`、`appendonly` 等），
+`requirepass` / `masterauth` / `*` 被拒绝。
 
 ```bash
 python rdctl.py cluster rbac-check      # kubectl auth can-i 断言

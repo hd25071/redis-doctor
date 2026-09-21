@@ -98,6 +98,6 @@ python scripts/verify_real_cluster.py --scenarios S01,S06 --wait 20 --settle 40
 | Redis 报 NOPERM / NOAUTH（`doctor` 用户不存在） | Pod 重启后 ACL 丢失，重跑 `deploy/redis/acl-init-job.yaml` |
 | 注入命令在 Windows 上失败 | 命令使用 POSIX 引号，需要可用的 `sh`/`bash`；否则用 `RD_SHELL` 指定，或直接对沙箱后端运行 |
 | 同一告警反复触发诊断 | Alertmanager fingerprint 去重 + `RD_ALERT_COOLDOWN_SECONDS` 冷却 |
+| 控制台「注入并诊断」或 `/diagnose` 返回 401 | 写操作需认证：设置 `RD_API_TOKEN`（或 `RD_WEBHOOK_TOKEN`）并带 `Authorization: Bearer <token>` |
 | exporter 只抓到一个 Pod | 使用 sidecar 或多目标模式 + relabel（`deploy/monitoring/redis-exporter.yaml`） |
 | 结论里证据为空 | 检查对应场景的 `required_signals` 是否能被工具观察到，`tests/test_faultlab.py` 会拦截这类回归 |
-
