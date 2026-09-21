@@ -12,35 +12,88 @@ import json
 from typing import Any
 
 STYLE = """
-:root{--bg:#0f1216;--panel:#161a21;--line:#242b35;--fg:#e7ebf0;--muted:#96a1af;--accent:#63b3ff}
+:root{
+  --bg:#0b0e14;--bg2:#0f131b;--panel:rgba(255,255,255,.028);--line:rgba(255,255,255,.09);
+  --line-strong:rgba(255,255,255,.16);--fg:#eef2f8;--muted:#8d99ab;--accent:#5b9dff;
+  --accent2:#8b7cff;--radius:14px;
+}
 *{box-sizing:border-box}
-body{font-family:ui-sans-serif,"Segoe UI",Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:var(--fg)}
-header{display:flex;justify-content:space-between;align-items:baseline;padding:14px 22px;background:var(--panel);border-bottom:1px solid var(--line)}
-h1{font-size:16px;margin:0;font-weight:600}
-h2{font-size:14px;margin:20px 0 8px}
-h3{font-size:12px;margin:16px 0 6px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
-a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-main{padding:18px 22px 40px;max-width:1240px}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;color:var(--fg);font-size:14px;line-height:1.55;min-height:100vh;
+  font-family:"Inter",ui-sans-serif,"Segoe UI Variable","Segoe UI",Helvetica,Arial,sans-serif;
+  background:
+    radial-gradient(900px 500px at 12% -9%,rgba(91,157,255,.16),transparent 60%),
+    radial-gradient(700px 420px at 100% 0,rgba(139,124,255,.13),transparent 55%),
+    linear-gradient(180deg,var(--bg) 0%,var(--bg2) 100%);
+  background-attachment:fixed;
+}
+header{
+  position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:20px;padding:13px 26px;
+  border-bottom:1px solid var(--line);background:rgba(11,14,20,.78);
+  backdrop-filter:blur(14px) saturate(150%);
+}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:-.01em}
+.brand .mark{width:11px;height:11px;border-radius:50%;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 0 18px rgba(91,157,255,.55)}
+nav{display:flex;gap:2px}
+nav a{padding:6px 12px;border-radius:999px;color:var(--muted);font-size:13px}
+nav a:hover{color:var(--fg);background:rgba(255,255,255,.06);text-decoration:none}
+header .spacer{margin-left:auto}
+a{color:var(--accent);text-decoration:none;transition:color .15s}
+a:hover{color:#8ec1ff}
+main{padding:26px 26px 64px;max-width:1280px;margin:0 auto}
+h2{font-size:15px;margin:26px 0 10px;font-weight:600;letter-spacing:-.01em}
+h3{font-size:11.5px;margin:0 0 10px;color:var(--muted);font-weight:600;
+  text-transform:uppercase;letter-spacing:.08em}
 .muted{color:var(--muted)}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
-.card .v{font-size:22px;font-weight:600}
-.card .k{font-size:12px;color:var(--muted);margin-top:2px}
-table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-th{background:var(--panel);color:var(--muted);font-weight:600}
-code,pre{font-family:ui-monospace,Consolas,"Courier New",monospace;font-size:12.5px}
-pre{background:#12161d;border:1px solid var(--line);border-radius:6px;padding:9px;overflow:auto;max-height:300px;white-space:pre-wrap}
-.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11.5px;background:#233043;color:#a8d3ff}
-.ok{background:#17301f;color:#8fe0a8}.bad{background:#3a1d22;color:#ff9aa8}.warn{background:#37301c;color:#ffd479}
-form.inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-select,input,button{background:#12161d;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:13px}
-button{cursor:pointer}
-button.primary{background:#1b4a7a;border-color:#2a6ea8}
-button.danger{background:#4a1f26;border-color:#7a2b36}
+.lead{color:var(--muted);margin:0 0 20px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:14px}
+.card{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);
+  background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.012));padding:16px 18px;
+  transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.card:hover{transform:translateY(-2px);border-color:var(--line-strong);box-shadow:0 12px 30px rgba(0,0,0,.35)}
+.card:before{content:"";position:absolute;inset:0 0 auto 0;height:2px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));opacity:.75}
+.card .v{font-size:26px;font-weight:640;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.card .k{font-size:12px;color:var(--muted);margin-top:4px}
+.panel{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);
+  padding:18px;backdrop-filter:blur(6px)}
+.panel + .panel{margin-top:20px}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tbody tr{transition:background .12s}
+tbody tr:hover{background:rgba(255,255,255,.035)}
+th{font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;
+  letter-spacing:.06em;background:rgba(255,255,255,.02)}
+code,pre{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12.5px}
+code{color:#bcd4ff;word-break:break-word}
+td code{display:inline-block;max-width:230px}
+pre{background:rgba(0,0,0,.32);border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+  overflow:auto;max-height:320px;white-space:pre-wrap;word-break:break-word}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;
+  font-size:11.5px;font-weight:550;white-space:nowrap;background:rgba(91,157,255,.12);
+  color:#a9cdff;border:1px solid rgba(91,157,255,.28)}
+.pill:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.9}
+.ok{background:rgba(70,214,140,.12);color:#84e3ad;border-color:rgba(70,214,140,.3)}
+.bad{background:rgba(255,99,126,.12);color:#ff9db0;border-color:rgba(255,99,126,.3)}
+.warn{background:rgba(255,196,84,.12);color:#ffd58a;border-color:rgba(255,196,84,.3)}
+form.inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+select,input,button{font:inherit;color:var(--fg);background:rgba(255,255,255,.04);
+  border:1px solid var(--line);border-radius:10px;padding:8px 12px;
+  transition:border-color .15s,background .15s}
+select:hover,input:hover{border-color:var(--line-strong)}
+select:focus,input:focus,button:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(91,157,255,.2)}
+button{cursor:pointer;font-weight:550}
+button.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#08111f}
+button.primary:hover{filter:brightness(1.06)}
+button.danger{background:rgba(255,99,126,.14);border-color:rgba(255,99,126,.32);color:#ffb3c0}
+button.danger:hover{background:rgba(255,99,126,.22)}
 small{color:var(--muted)}
-.grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:20px}
-@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.grid2{display:grid;grid-template-columns:1.55fr 1fr;gap:22px;align-items:start}
+@media(max-width:960px){.grid2{grid-template-columns:1fr}}
 """
 
 
@@ -53,10 +106,13 @@ def layout(title: str, body: str) -> str:
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{_esc(title)} · redis-doctor</title><style>{STYLE}</style></head><body>"
-        "<header><h1><a href='/ui' style='color:inherit'>redis-doctor</a></h1>"
-        "<small>Redis on Kubernetes 诊断控制台</small></header><main>"
-        + body
-        + "</main></body></html>"
+        "<header><span class='brand'><span class='mark'></span>"
+        "<a href='/ui' style='color:inherit'>redis-doctor</a></span>"
+        "<nav><a href='/ui'>控制台</a><a href='/ui/approvals'>审批</a>"
+        "<a href='/scenarios'>场景</a><a href='/diagnoses'>记录 API</a>"
+        "<a href='/metrics'>指标</a><a href='/docs'>OpenAPI</a></nav>"
+        "<span class='spacer'></span><small>Redis on Kubernetes 诊断</small>"
+        "</header><main>" + body + "</main></body></html>"
     )
 
 
@@ -109,20 +165,16 @@ def dashboard_page(
     approval_rows = "".join(
         "<tr>"
         f"<td><a href='/ui/diagnoses/{_esc(a['diagnosis_id'])}'>{_esc(a['diagnosis_id'])}</a></td>"
-        f"<td>{_esc(a['action'].get('action'))}</td>"
         f"<td>{_esc(a['action'].get('tier'))} / {_esc(a['action'].get('risk'))}</td>"
         f"<td><code>{_esc(a['action'].get('command'))}</code></td>"
         f"<td><form class='inline' method='post' action='/ui/approvals/{_esc(a['id'])}'>"
-        "<input type='hidden' name='decision' value='approve'>"
-        "<button class='primary'>批准</button></form></td>"
-        f"<td><form class='inline' method='post' action='/ui/approvals/{_esc(a['id'])}'>"
-        "<input type='hidden' name='decision' value='deny'>"
-        "<button class='danger'>拒绝</button></form></td>"
+        "<button class='primary' name='decision' value='approve'>批准</button>"
+        "<button class='danger' name='decision' value='deny'>拒绝</button></form></td>"
         "</tr>"
         for a in pending
     )
     body = [
-        "<p class='muted'>"
+        "<p class='lead'>"
         + _esc(
             banner or "选择场景注入故障并运行诊断；每次工具调用、证据引用与审批动作都会写入轨迹。"
         )
@@ -133,7 +185,7 @@ def dashboard_page(
             for k, v in cards
         )
         + "</div>",
-        "<div class='grid2'><div>",
+        "<div class='grid2'><div><div class='panel'>",
         "<h3>运行诊断</h3>",
         "<form class='inline' method='post' action='/ui/diagnose'>",
         f"<select name='scenario'>{options}</select>",
@@ -145,10 +197,10 @@ def dashboard_page(
         "<table><tr><th>ID</th><th>告警</th><th>根因</th><th>置信度</th><th>状态</th>"
         "<th>组</th><th>告警摘要</th></tr>",
         rows or "<tr><td colspan='7' class='muted'>还没有诊断记录</td></tr>",
-        "</table></div><div>",
+        "</table></div></div><div><div class='panel'>",
         "<h3>待审批动作</h3>",
-        "<table><tr><th>诊断</th><th>动作</th><th>等级</th><th>命令</th><th></th><th></th></tr>",
-        approval_rows or "<tr><td colspan='6' class='muted'>无待审批动作</td></tr>",
+        "<table><tr><th>诊断</th><th>等级</th><th>将执行的命令</th><th>决策</th></tr>",
+        approval_rows or "<tr><td colspan='4' class='muted'>无待审批动作</td></tr>",
         "</table>",
         "<h3>根因分布</h3>",
         "<table>"
@@ -166,7 +218,7 @@ def dashboard_page(
         "<tr><td><a href='/approvals'>/approvals</a></td><td>审批队列（JSON）</td></tr>"
         "<tr><td><a href='/metrics'>/metrics</a></td><td>Prometheus 指标</td></tr>"
         "<tr><td><a href='/docs'>/docs</a></td><td>OpenAPI</td></tr></table>",
-        "</div></div>",
+        "</div></div></div>",
     ]
     return layout("控制台", "".join(body))
 
