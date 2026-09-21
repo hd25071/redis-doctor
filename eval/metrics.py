@@ -43,6 +43,8 @@ class ScenarioRun:
     clean_after_recover: bool = True
     approval_status: str = "none"
     execution_verified: bool | None = None
+    grounded: bool = False
+    unreferenced: bool = False
     status: str = "ok"
     error: str = ""
 
@@ -99,6 +101,11 @@ def score_run(
     usage = state.get("token_usage") or {}
     approval = state.get("approval") or {}
     execution = state.get("execution") or {}
+    grounded = (
+        (report.root_cause == scenario.category) and round(cited_hits / len(required), 4) == 1.0
+        if required
+        else (report.root_cause == scenario.category)
+    )
     return ScenarioRun(
         scenario_id=scenario.id,
         variant=variant_key,
@@ -128,6 +135,10 @@ def score_run(
         clean_after_recover=clean_after_recover,
         approval_status=approval.get("status", "none"),
         execution_verified=execution.get("verified"),
+        # Answer correct *and* every required signal cited: the metric that
+        # separates "right for the right reason" from "right by luck".
+        grounded=grounded,
+        unreferenced=len(refs) == 0,
         status=state.get("status", "ok"),
         error=state.get("error", ""),
     )
@@ -157,9 +168,20 @@ def aggregate(runs: list[ScenarioRun]) -> dict[str, dict[str, Any]]:
         n = len(items)
         totals = sum(i.total_refs for i in items)
         unsupported = sum(i.unsupported_refs for i in items)
+        hits = sum(i.top1 for i in items)
+        # Wilson 95% interval: 3 repeats give a wide interval, and saying so is
+        # better than quoting a single percentage.
+        z = 1.96
+        phat = hits / n
+        denom = 1 + z * z / n
+        centre = (phat + z * z / (2 * n)) / denom
+        spread = z * ((phat * (1 - phat) / n + z * z / (4 * n * n)) ** 0.5) / denom
         out[variant] = {
             "runs": n,
-            "top1": round(sum(i.top1 for i in items) / n, 4),
+            "top1": round(phat, 4),
+            "top1_ci95": [round(max(0.0, centre - spread), 4), round(min(1.0, centre + spread), 4)],
+            "grounded_top1": round(sum(i.grounded for i in items) / n, 4),
+            "unreferenced_conclusions": round(sum(i.unreferenced for i in items) / n, 4),
             "top3": round(sum(i.top3_hit for i in items) / n, 4),
             "evidence_recall_seen": round(sum(i.evidence_recall_seen for i in items) / n, 4),
             "evidence_recall_cited": round(sum(i.evidence_recall_cited for i in items) / n, 4),
@@ -177,11 +199,18 @@ def aggregate(runs: list[ScenarioRun]) -> dict[str, dict[str, Any]]:
     return out
 
 
-def per_scenario_matrix(runs: list[ScenarioRun]) -> dict[str, dict[str, bool]]:
-    matrix: dict[str, dict[str, bool]] = {}
+def per_scenario_matrix(runs: list[ScenarioRun]) -> dict[str, dict[str, Any]]:
+    """Hits / runs per (scenario, variant): keeps repeat-level stability."""
+    counts: dict[str, dict[str, list[int]]] = {}
     for run in runs:
-        matrix.setdefault(run.scenario_id, {})[run.variant] = run.top1
-    return matrix
+        counts.setdefault(run.scenario_id, {}).setdefault(run.variant, []).append(int(run.top1))
+    return {
+        scenario: {
+            variant: {"hits": sum(values), "runs": len(values)}
+            for variant, values in variants.items()
+        }
+        for scenario, variants in counts.items()
+    }
 
 
 def failure_breakdown(runs: list[ScenarioRun]) -> list[dict[str, Any]]:

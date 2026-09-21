@@ -18,10 +18,12 @@ reaches the actuator, and that path is audited like any other tool call.
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 import rdconfig
 from agent.graph import DiagnosisGraph, execute_approved_action, plan_write_call
@@ -89,6 +91,8 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
     cluster = (
         SimCluster(settings.namespace, settings.instance) if settings.backend != "real" else None
     )
+    # The sandbox is a single shared object: serialise diagnoses that mutate it.
+    sandbox_lock = threading.Lock()
 
     def _scenarios() -> list[dict[str, Any]]:
         lab = FaultLab(cluster, settings.resolve(settings.scenarios_dir))
@@ -221,7 +225,9 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
         metrics.inc("redis_doctor_unauthorized_total", run.registry.audit.unauthorized_attempts)
         metrics.inc("redis_doctor_diagnosis_seconds_sum", state.elapsed_seconds)
         metrics.inc("redis_doctor_llm_tokens_total", state.token_usage.get("total_tokens", 0))
-        for hit in detect_injection(alert_text):
+        # Count hits from the alert text *and* from tool output, otherwise a
+        # poisoned log line would never show up in the metric.
+        for hit in sorted(set(detect_injection(alert_text)) | set(state.injection_hits)):
             metrics.inc("redis_doctor_injection_hits_total", 1, kind=hit)
         if sandbox_scenario and lab is not None:
             lab.recover(sandbox_scenario)
@@ -255,8 +261,8 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
             return JSONResponse({"accepted": 0, "detail": "no alerts in payload"})
         accepted = []
         for alert in alerts:
-            should_run, seen = store.note_fingerprint(
-                alert["fingerprint"], alert["alertname"], settings.alert_cooldown_seconds
+            should_run, seen = store.check_fingerprint(
+                alert["fingerprint"], settings.alert_cooldown_seconds
             )
             if not should_run:
                 metrics.inc("redis_doctor_alert_deduped_total")
@@ -268,11 +274,18 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
                     }
                 )
                 continue
-            result = _run(
-                alert["alert_text"],
-                settings.variant,
-                fingerprint=alert["fingerprint"],
-                alertname=alert["alertname"],
+            with sandbox_lock:
+                result = await run_in_threadpool(
+                    _run,
+                    alert["alert_text"],
+                    settings.variant,
+                    alert["fingerprint"],
+                    alert["alertname"],
+                )
+            # Cooldown starts only after the diagnosis completed, so a failure
+            # does not mute the alert for the next 15 minutes.
+            store.record_fingerprint(
+                alert["fingerprint"], alert["alertname"], result["diagnosis_id"]
             )
             accepted.append({"fingerprint": alert["fingerprint"], "diagnosed": True, **result})
         del background  # kept for a future async worker; diagnosis is fast here
@@ -296,14 +309,17 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
         # auto_approve writes audit rows claiming a human approved an action, so
         # it is restricted to the sandbox and never enabled by the caller alone.
         auto_approve = bool(body.get("auto_approve")) and settings.backend == "sandbox"
-        return JSONResponse(
-            _run(
+        with sandbox_lock:
+            result = await run_in_threadpool(
+                _run,
                 alert_text,
                 body.get("variant", settings.variant),
-                auto_approve=auto_approve,
-                sandbox_scenario=body.get("sandbox_scenario"),
+                None,
+                None,
+                auto_approve,
+                body.get("sandbox_scenario"),
             )
-        )
+        return JSONResponse(result)
 
     @app.get("/diagnoses")
     def list_diagnoses(limit: int = 50) -> dict[str, Any]:
@@ -466,12 +482,16 @@ def create_app(settings: rdconfig.Settings | None = None) -> FastAPI:
                 "with an alert when running against a real cluster",
             )
         scenario = FaultLab(cluster, settings.resolve(settings.scenarios_dir)).get(scenario_id)
-        result = _run(
-            scenario.alert,
-            variant,
-            alertname=f"console:{scenario_id}",
-            sandbox_scenario=scenario_id,
-        )
+        with sandbox_lock:
+            result = await run_in_threadpool(
+                _run,
+                scenario.alert,
+                variant,
+                None,
+                f"console:{scenario_id}",
+                False,
+                scenario_id,
+            )
         return RedirectResponse(f"/ui/diagnoses/{result['diagnosis_id']}", status_code=303)
 
     @app.get("/ui/diagnoses/{diagnosis_id}", response_class=HTMLResponse)

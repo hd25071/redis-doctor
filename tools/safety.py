@@ -277,8 +277,20 @@ _INJECTION_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"(?i)disregard (all |the )?(previous|prior|above)", "instruction_override"),
     (r"(?i)忽略(之前|上面|以上)(的)?(所有)?(指令|指示|提示)", "instruction_override"),
     (r"(?i)you are now|你现在是|system prompt", "role_switch"),
-    (r"(?i)delete (the )?(pod|statefulset|namespace|secret)", "destructive_instruction"),
-    (r"(?i)(删除|清空|flush)(所有|全部)?(pod|数据|命名空间|磁盘)", "destructive_instruction"),
+    # A destructive phrase only counts as an injection attempt when it carries a
+    # directive cue. Kubernetes' own events say "delete Pod ... successful",
+    # which is evidence, not an attack.
+    (
+        r"(?i)(ignore|disregard|instead|please|you (must|should)|now|"
+        r"忽略|无视|请|必须|立刻|立即)[^.\n]{0,40}"
+        r"delete\s+(the\s+)?(pod|statefulset|namespace|secret)",
+        "destructive_instruction",
+    ),
+    (
+        r"(?i)(忽略|无视|请|必须|立刻|立即)[^。\n]{0,30}(删除|清空)(所有|全部)?"
+        r"\s*(pod|数据|命名空间|磁盘)",
+        "destructive_instruction",
+    ),
     (r"(?i)kubectl\s+(delete|apply|exec|patch)", "command_injection"),
     (r"(?i)exfiltrat|send .*(token|password|secret).*(to|http)", "exfiltration"),
 )

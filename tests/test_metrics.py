@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent.state import DiagnosisReport, EvidenceRef
-from eval.metrics import aggregate, failure_breakdown, score_run
+from eval.metrics import aggregate, failure_breakdown, per_scenario_matrix, score_run
 from faultlab.schema import Scenario
 
 
@@ -106,3 +106,30 @@ def test_aggregate_and_failure_classification() -> None:
     assert agg["top1"] == 0.5
     kinds = {row["kind"] for row in failure_breakdown([good, bad])}
     assert kinds == {"证据不足"}
+
+
+def test_grounded_top1_and_repeat_matrix() -> None:
+    """A correct answer with no cited evidence is not 'grounded'."""
+    lucky = score_run(
+        scenario=_scenario(),
+        variant_key="D",
+        run_index=0,
+        report=DiagnosisReport(root_cause="oom_killed", summary="", confidence=0.5),
+        trace=[],
+        state=_state(["pod_oom_killed"]),
+        audit={"total": 0, "unauthorized_attempts": 0},
+        budget={"steps": 1},
+    )
+    assert lucky.top1 is True
+    assert lucky.grounded is False
+    assert lucky.unreferenced is True
+
+    agg = aggregate([lucky])["D"]
+    assert agg["top1"] == 1.0
+    assert agg["grounded_top1"] == 0.0
+    assert agg["unreferenced_conclusions"] == 1.0
+    assert matrix_of([lucky])["S99"]["D"] == {"hits": 1, "runs": 1}
+
+
+def matrix_of(runs):
+    return per_scenario_matrix(runs)

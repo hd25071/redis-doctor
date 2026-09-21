@@ -54,8 +54,14 @@ def scenario_table(data: dict[str, Any]) -> str:
     for scenario_id in sorted(data["matrix"]):
         cells = []
         for variant in variants:
-            ok = data["matrix"][scenario_id].get(variant)
-            cells.append("✅" if ok else ("❌" if ok is False else "—"))
+            cell = data["matrix"][scenario_id].get(variant)
+            if cell is None:
+                cells.append("—")
+            elif isinstance(cell, dict):
+                hits, runs = cell["hits"], cell["runs"]
+                cells.append("✅" if hits == runs else (f"{hits}/{runs}" if hits else "❌"))
+            else:
+                cells.append("✅" if cell else "❌")
         rows.append(
             f"| {scenario_id} | {truth.get(scenario_id, '')} | "
             + " | ".join(cells)

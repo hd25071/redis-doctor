@@ -340,6 +340,39 @@ class Store:
                 (diagnosis_id, fingerprint),
             )
 
+    def check_fingerprint(self, fingerprint: str, cooldown_seconds: int) -> tuple[bool, int]:
+        """Read-only cooldown check (recording happens after a successful run)."""
+        now = time.time()
+        row = self._conn.execute(
+            "SELECT last_seen, seen_count FROM alert_fingerprints WHERE fingerprint = ?",
+            (fingerprint,),
+        ).fetchone()
+        if row is None:
+            return True, 0
+        seen = int(row["seen_count"])
+        return (now - float(row["last_seen"])) >= cooldown_seconds, seen
+
+    def record_fingerprint(
+        self, fingerprint: str, alertname: str, diagnosis_id: str | None = None
+    ) -> None:
+        """Record an alert as handled. Called only after the diagnosis succeeded,
+        so a failure does not start the cooldown window."""
+        now = time.time()
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO alert_fingerprints
+                (fingerprint, alertname, first_seen, last_seen, seen_count, last_diagnosis_id)
+                VALUES (?,?,?,?,1,?)
+                ON CONFLICT(fingerprint) DO UPDATE SET
+                    last_seen = excluded.last_seen,
+                    seen_count = alert_fingerprints.seen_count + 1,
+                    last_diagnosis_id = COALESCE(excluded.last_diagnosis_id,
+                                                 alert_fingerprints.last_diagnosis_id)
+                """,
+                (fingerprint, alertname, now, now, diagnosis_id),
+            )
+
     def stats(self) -> dict[str, Any]:
         diagnoses = self.count_diagnoses()
         approvals = self._conn.execute(
