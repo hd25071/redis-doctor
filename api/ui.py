@@ -164,11 +164,16 @@ def dashboard_page(
         "</tr>"
         for r in records
     )
+    def _short(text: str, limit: int = 34) -> str:
+        text = text or ""
+        return text if len(text) <= limit else text[: limit - 1] + "…"
+
     approval_rows = "".join(
         "<tr>"
         f"<td><a href='/ui/diagnoses/{_esc(a['diagnosis_id'])}'>{_esc(a['diagnosis_id'])}</a></td>"
         f"<td>{_esc(a['action'].get('tier'))} / {_esc(a['action'].get('risk'))}</td>"
-        f"<td><code>{_esc(a['action'].get('command'))}</code></td>"
+        f"<td><code title='{_esc(a['action'].get('command'))}'>"
+        f"{_esc(_short(a['action'].get('command')))}</code></td>"
         f"<td><form class='inline' method='post' action='/ui/approvals/{_esc(a['id'])}'>"
         "<button class='primary' name='decision' value='approve'>批准</button>"
         "<button class='danger' name='decision' value='deny'>拒绝</button></form></td>"
@@ -357,6 +362,19 @@ def records_page(records: list[dict[str, Any]]) -> str:
 
 def metrics_page(stats: dict[str, Any], prometheus_text: str) -> str:
     approvals = stats.get("approvals", {}) or {}
+    if not prometheus_text.strip():
+        # The live counters start at zero after a restart, while the trajectory
+        # store keeps history. Show store-derived counters so the page is never
+        # empty (and says which numbers are persistent).
+        lines = [f"redis_doctor_diagnoses_total {stats.get('diagnoses', 0)}"]
+        lines += [
+            f'redis_doctor_approvals_total{{decision="{key}"}} {value}'
+            for key, value in sorted(approvals.items())
+        ]
+        lines.append(
+            f"redis_doctor_alert_fingerprints_total {stats.get('alert_fingerprints', 0)}"
+        )
+        prometheus_text = "\n".join(lines) + "\n"
     cards = [
         ("诊断总数", stats.get("diagnoses", 0)),
         ("待审批", approvals.get("pending", 0)),

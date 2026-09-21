@@ -3,13 +3,13 @@
 Redis on Kubernetes 的故障诊断 Agent。16 类故障可注入与恢复，每次诊断输出结构化结论与
 逐条可追溯的工具调用证据；写操作默认不执行，需人工审批后由独立身份执行。
 
-被诊断对象是 redis-operator 生成的 3 副本主从集群（`ops.example.com/v1alpha1` 的 `Redis` CR）。
-
-控制台（`/ui`）：统计、场景启动器、诊断记录、待审批动作。
-
 ![诊断控制台](docs/screenshots/ui-console.png)
 
-轨迹页（`/ui/diagnoses/<id>`）：结论、逐条证据、假设的支持与反驳、审批、完整工具轨迹。
+控制台提供场景注入、诊断记录、待审批动作与根因分布；点任意记录进入轨迹页，可逐条核对证据、
+假设与审批。被诊断对象是 redis-operator 生成的 3 副本主从集群
+（`ops.example.com/v1alpha1` 的 `Redis` CR）。
+
+轨迹页（`/ui/diagnoses/<id>`）：
 
 ![诊断轨迹](docs/screenshots/ui-trajectory.png)
 
